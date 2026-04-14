@@ -4,134 +4,102 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository Overview
 
-tildebin is a collection of standalone utility scripts for system administrators. Scripts are placed directly in ~/bin and run independently. Focus areas: AWS EC2 management (boto3), baremetal system monitoring, Kubernetes cluster operations (kubectl), and SSH orchestration.
+`boxctl` is a unified CLI wrapping ~315 diagnostic scripts for baremetal (216) and Kubernetes (93) systems, designed for LLM agents to investigate infrastructure issues. Scripts are self-describing via YAML-in-comment metadata, emit structured JSON, and use semantic exit codes.
 
-## Build & Test Commands
+## Commands
 
 ```bash
-# Run all tests
-make test
+# Environment setup
+make setup                      # runs scripts/setup-dev.sh (pip install -e .[dev])
 
-# Run tests with verbose output
+# Testing (unit, excludes tests/integration)
+make test
+make test-cov                   # with coverage, fails under 80%
 make test-verbose
 
-# Run specific category
-make test-ec2          # AWS tests
-make test-baremetal    # Baremetal tests
-make test-k8s          # Kubernetes tests
+# Integration tests (slower, may shell out)
+make test-integration
+make test-all                   # unit + integration
 
-# Run single test (two ways)
-make test-disk_health_check
-python3 tests/test_disk_health_check.py
+# Single test
+python3 -m pytest tests/scripts/baremetal/test_loadavg_analyzer.py -v
+python3 -m pytest tests/ -k "disk_health" -v
 
-# Run tests matching pattern
-make test-filter PATTERN=disk
-python3 tests/run_tests.py -f disk raid
+# Build / install
+make build                      # scripts/build.sh -> dist/ tarball
+make install                    # installs to /opt/boxctl, symlinks /usr/local/bin/boxctl
 
-# Check dependencies
-make check-deps
+# Run the CLI during dev (no install needed after `make setup`)
+boxctl list                     # list all discovered scripts
+boxctl search "high load"       # find by keyword/tag
+boxctl show loadavg_analyzer    # show metadata + related
+boxctl run loadavg_analyzer --format json
+boxctl lint scripts/baremetal/foo.py
 ```
 
 ## Exit Code Convention
 
-All scripts follow this convention:
-- **0** = Success / healthy / no issues
-- **1** = Warnings or errors found
-- **2** = Usage error (bad arguments) or missing dependency
+All scripts follow:
+- **0** = healthy / no issues
+- **1** = issues found (warnings, errors, thresholds exceeded)
+- **2** = usage error, missing dependency, or tool unavailable
+
+Agents use these to drive investigation: exit 1 means dig deeper with `related` scripts.
 
 ## Architecture
 
-### Directory Structure
+### Two layers: framework (`boxctl/`) and scripts (`scripts/`)
+
+**Framework** (`boxctl/` package):
+- `boxctl/cli.py` - argparse entry, subcommands: `list`, `search`, `show`, `run`, `lint`, `doctor`
+- `boxctl/core/discovery.py` - `Script` dataclass, walks `scripts/` tree, parses metadata
+- `boxctl/core/metadata.py` - parses YAML embedded in top-of-file `# boxctl:` comment block
+- `boxctl/core/runner.py` - invokes a script's `run(args, output, context)` entrypoint
+- `boxctl/core/context.py` - `Context` class wraps filesystem/subprocess for DI (tests use `MockContext`)
+- `boxctl/core/output.py` - `Output` class: scripts call `output.emit(key, value)` then framework calls `output.render(format)`. Supports plain/json; table handled by scripts when needed.
+- `boxctl/core/linter.py` - validates script metadata and structure
+- `boxctl/core/profiles.py`, `config.py` - config resolution, issue-to-script mapping
+
+**Scripts** (`scripts/baremetal/*.py`, `scripts/k8s/*.py`):
+Every script has the shape:
+```python
+#!/usr/bin/env python3
+# boxctl:
+#   category: baremetal/cpu
+#   tags: [load, cpu]
+#   requires: []                 # external tools (smartctl, kubectl, ...)
+#   privilege: user              # or: root
+#   related: [cpu_pressure_monitor, run_queue_monitor]
+#   brief: One-line description
+
+from boxctl.core.context import Context
+from boxctl.core.output import Output
+
+def run(args, output: Output, context: Context) -> int:
+    ...
+    output.emit("key", value)
+    return 0
 ```
-tildebin/
-├── *.py, *.sh          # Utility scripts (flat, no nesting)
-├── tests/
-│   ├── test_*.py       # One test file per script
-│   └── run_tests.py    # Test runner with filtering
-└── Makefile            # Test automation
-```
+The framework discovers the script, parses metadata, constructs `Output` + `Context`, calls `run()`, then renders output.
 
-### Script Categories
+### Testing Philosophy
 
-**AWS Scripts** (boto3): `listec2hosts.py`, `ec2_manage.py`, `ec2_tag_summary.py`, `terminate_instance.py`, `stop_all_instances.py`, `emptysgs.py`, `listvolumes.py`
-- Default region: us-west-2 (except emptysgs.py: us-east-1)
-- Support `-r/--region` flag
-- Import boto3 late (after credential validation)
-- Check `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` env vars
-
-**Kubernetes Scripts** (kubectl): `k8s_*.py`, `kubernetes_node_health.py`
-- Use kubectl subprocess with JSON output
-- Support `-n/--namespace` filtering
-- Exit code 2 if kubectl not found
-
-**Baremetal Scripts**: `baremetal_*.py`, `disk_health_check.py`, `check_raid.py`, etc.
-- Check for system tools before using (smartctl, mdadm, etc.)
-- Exit code 2 if required tool missing
+- Tests live in `tests/` mirroring the source tree (`tests/scripts/baremetal/`, `tests/core/`).
+- `tests/conftest.py` provides `MockContext` with a `file_contents` dict and command mocking.
+- Tests must NOT require real hardware tools, AWS credentials, `kubectl` access, or network.
+- Prefer asserting on `output.data` (the dict emitted) rather than stdout text.
+- `Output._printed` guard prevents double-render; **do not reuse a single `Output` across multiple `run()` calls** in a test.
+- `_render_plain()` title-cases keys: `total_events` renders as `Total Events`.
 
 ### Common Flags
 
-Most scripts support:
-- `--format {plain,json,table}` - Output format (default: plain)
-- `-v/--verbose` - Detailed output
-- `-w/--warn-only` - Only show issues
-- `--force` - Skip confirmation (destructive ops)
-- `--dry-run` - Simulate without executing
-
-## Testing Philosophy
-
-Tests use subprocess to run scripts as users would. Tests must NOT require:
-- AWS credentials
-- Hardware tools (smartctl, etc.)
-- kubectl access
-- Network connectivity
-
-Tests validate: argument parsing, help message, error handling, JSON output parsing, exit codes.
-
-## Key Patterns
-
-### AWS Script Pattern
-```python
-# Check credentials BEFORE importing boto3
-if not (os.environ.get('AWS_ACCESS_KEY_ID') and os.environ.get('AWS_SECRET_ACCESS_KEY')):
-    print("Error: AWS credentials not found", file=sys.stderr)
-    sys.exit(2)
-
-# Import late
-try:
-    import boto3
-except ImportError:
-    print("Error: boto3 required", file=sys.stderr)
-    sys.exit(2)
-```
-
-### Subprocess Tool Pattern (baremetal/k8s)
-```python
-try:
-    result = subprocess.run(['kubectl', 'get', 'pods', '-o', 'json'],
-                          capture_output=True, text=True, check=True)
-except FileNotFoundError:
-    print("Error: kubectl not found", file=sys.stderr)
-    sys.exit(2)
-except subprocess.CalledProcessError as e:
-    print(f"Error: {e.stderr}", file=sys.stderr)
-    sys.exit(1)
-```
-
-### Destructive Operations
-```python
-parser.add_argument("--force", action="store_true", help="Skip confirmation")
-parser.add_argument("--dry-run", action="store_true", help="Show what would happen")
-
-if not args.force:
-    response = input("Are you sure? [y/N] ")
-    if response.lower() != 'y':
-        sys.exit(0)
-```
+Scripts generally accept: `--format {plain,json,table}`, `-v/--verbose`, `-w/--warn-only`. Destructive ops (rare in boxctl) use `--force` + `--dry-run`.
 
 ## Critical Rules
 
-1. **Backward compatibility is sacred** - Never change default output format or remove CLI flags
-2. **Errors to stderr** - Use `print(..., file=sys.stderr)` for errors
-3. **Test file per script** - Every `foo.py` has `tests/test_foo.py`
-4. **Minimal dependencies** - Prefer stdlib; boto3 is the exception for AWS
-5. **Scripts must be executable** - `chmod +x script.py`
+1. **Backward compatibility is sacred** - default output format and CLI flags must not change; scripts are consumed by agents parsing output.
+2. **Script metadata must lint clean** - `boxctl lint <path>` before committing new/edited scripts; `related` entries must refer to real scripts.
+3. **Every script gets a test** - `scripts/baremetal/foo.py` -> `tests/scripts/baremetal/test_foo.py`, using `MockContext`.
+4. **Check tools before using them** - exit 2 with stderr message if a required binary is missing (`context.check_tool("smartctl")`).
+5. **Errors to stderr** - `print(..., file=sys.stderr)`; structured data goes through `output.emit()`.
+6. **Minimal deps** - stdlib + `pyyaml`. No adding runtime deps without strong justification.
