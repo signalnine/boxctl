@@ -98,6 +98,12 @@ def create_parser() -> argparse.ArgumentParser:
         help="Specific scripts to lint (default: all)",
     )
 
+    # mcp command
+    subparsers.add_parser(
+        "mcp",
+        help="Run boxctl as an MCP (Model Context Protocol) server over stdio",
+    )
+
     # request command
     request_parser = subparsers.add_parser(
         "request",
@@ -422,6 +428,14 @@ def cmd_doctor(args: argparse.Namespace) -> int:
     return 1 if missing_tools else 0
 
 
+def cmd_mcp(args: argparse.Namespace) -> int:
+    """Run boxctl as an MCP server on stdio."""
+    from boxctl.core.mcp_server import serve_stdio
+
+    serve_stdio(args.scripts_dir)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Main entry point."""
     parser = create_parser()
@@ -442,6 +456,7 @@ def main(argv: list[str] | None = None) -> int:
         "doctor": cmd_doctor,
         "lint": cmd_lint,
         "request": cmd_request,
+        "mcp": cmd_mcp,
     }
 
     return commands[args.command](args)
