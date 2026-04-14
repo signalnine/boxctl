@@ -162,3 +162,29 @@ print(" ".join(sys.argv[1:]))
 
         assert result.stdout == "mocked output"
         assert ["python3", "/path/to/script.py"] in ctx.commands_run
+
+
+class TestSudoPath:
+    """Exercises the sudo branch of run_script via the MockContext."""
+
+    def test_sudo_prepends_sudo(self, mock_context, monkeypatch):
+        monkeypatch.delenv("PYTHONPATH", raising=False)
+        ctx = mock_context(
+            tools_available=["python3", "sudo"],
+            command_outputs={("sudo", "python3", "/p/s.py"): "ok"},
+        )
+        run_script(Path("/p/s.py"), use_sudo=True, context=ctx)
+        assert ["sudo", "python3", "/p/s.py"] in ctx.commands_run
+
+    def test_sudo_with_pythonpath_passes_as_env_assignment(self, mock_context, monkeypatch):
+        monkeypatch.setenv("PYTHONPATH", "/some/where:/lib")
+        ctx = mock_context(
+            tools_available=["python3", "sudo"],
+            command_outputs={
+                ("sudo", "PYTHONPATH=/some/where:/lib", "python3", "/p/s.py"): "ok",
+            },
+        )
+        run_script(Path("/p/s.py"), use_sudo=True, context=ctx)
+        # Each element is a separate argv token -- no shell eval of the path.
+        last = ctx.commands_run[-1]
+        assert last[:4] == ["sudo", "PYTHONPATH=/some/where:/lib", "python3", "/p/s.py"]

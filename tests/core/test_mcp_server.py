@@ -124,6 +124,39 @@ class TestRunToolRedaction:
         result = run_script_tool(root, "leaky", timeout=10)
         assert "AKIAIOSFODNN7EXAMPLE" in result["stdout"]
 
+    def test_privileged_script_uses_sudo(self, tmp_path, monkeypatch):
+        """A script with privilege: root routes through sudo in run_script."""
+        scripts_dir = tmp_path / "scripts" / "baremetal"
+        scripts_dir.mkdir(parents=True)
+        p = scripts_dir / "needs_root.py"
+        p.write_text(
+            "#!/usr/bin/env python3\n"
+            "# boxctl:\n"
+            "#   category: baremetal/test\n"
+            "#   tags: [test]\n"
+            "#   requires: []\n"
+            "#   privilege: root\n"
+            "#   related: []\n"
+            "#   brief: needs sudo\n"
+            "pass\n"
+        )
+
+        import boxctl.core.mcp_server as mcp_mod
+        from boxctl.core.runner import ScriptResult
+
+        captured = {}
+
+        def fake_run_script(script_path, args=None, timeout=60, context=None, use_sudo=False):
+            captured["use_sudo"] = use_sudo
+            return ScriptResult(
+                script_name=script_path.name, returncode=0, stdout="", stderr="", timed_out=False
+            )
+
+        monkeypatch.setattr(mcp_mod, "run_script", fake_run_script)
+        res = run_script_tool(tmp_path, "needs_root", timeout=5)
+        assert captured["use_sudo"] is True
+        assert res["exit_code"] == 0
+
 
 class TestCreateServer:
     def test_registers_four_tools(self):
