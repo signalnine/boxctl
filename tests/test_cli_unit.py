@@ -219,3 +219,55 @@ class TestMain:
         """List command runs."""
         result = main(["--scripts-dir", str(tmp_path), "list"])
         assert result == 0
+
+
+class TestCmdRunExitCode:
+    """Exit-code propagation from run_script through cmd_run."""
+
+    def _make_script(self, tmp_path):
+        p = tmp_path / "scripts" / "baremetal"
+        p.mkdir(parents=True)
+        s = p / "stub.py"
+        s.write_text(
+            "#!/usr/bin/env python3\n"
+            "# boxctl:\n"
+            "#   category: baremetal/test\n"
+            "#   tags: [test]\n"
+            "#   requires: []\n"
+            "#   privilege: user\n"
+            "#   related: []\n"
+            "#   brief: stub\n"
+            "pass\n"
+        )
+        return tmp_path
+
+    def test_none_returncode_maps_to_1(self, tmp_path, monkeypatch):
+        """If runner returns returncode=None (crashed child), cmd_run exits 1, not 0."""
+        from boxctl.core.runner import ScriptResult
+        from boxctl import cli as cli_mod
+
+        root = self._make_script(tmp_path)
+
+        def fake_run_script(*a, **kw):
+            return ScriptResult(
+                script_name="stub.py", returncode=None, stdout="", stderr="", timed_out=False
+            )
+
+        monkeypatch.setattr(cli_mod, "run_script", fake_run_script)
+        rc = main(["--scripts-dir", str(root), "run", "stub"])
+        assert rc == 1
+
+    def test_nonzero_returncode_preserved(self, tmp_path, monkeypatch):
+        from boxctl.core.runner import ScriptResult
+        from boxctl import cli as cli_mod
+
+        root = self._make_script(tmp_path)
+
+        def fake_run_script(*a, **kw):
+            return ScriptResult(
+                script_name="stub.py", returncode=42, stdout="", stderr="", timed_out=False
+            )
+
+        monkeypatch.setattr(cli_mod, "run_script", fake_run_script)
+        rc = main(["--scripts-dir", str(root), "run", "stub"])
+        assert rc == 42

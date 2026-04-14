@@ -218,7 +218,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         print("Script timed out", file=sys.stderr)
         return 1
 
-    return result.returncode or 0
+    return result.returncode if result.returncode is not None else 1
 
 
 def cmd_show(args: argparse.Namespace) -> int:
