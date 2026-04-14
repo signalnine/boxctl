@@ -10,6 +10,11 @@ LLM agents excel at reasoning about complex systems, but they need structured ac
 - **Consistent JSON output** that agents can parse and reason about
 - **Semantic exit codes** (0=healthy, 1=issues, 2=error) for decision-making
 - **Rich metadata** so agents can discover relevant scripts by symptom or keyword
+- **MCP server** so Claude Code / Cursor / Windsurf can call scripts as tools
+- **Remote execution** over SSH against an inventory of hosts, with a
+  restricted-shell provisioning flow for read-only access
+- **Automatic secret redaction** of PEM keys, AWS keys, JWTs, API tokens, and
+  DB connection strings in all rendered output
 - **Testable design** with dependency injection for reliable operation
 
 ## How Agents Use boxctl
@@ -165,6 +170,118 @@ boxctl doctor --category baremetal
 boxctl lint
 ```
 
+### Remote Execution
+
+Run any script against a remote host (or a group of hosts) via SSH:
+
+```bash
+# One-off against an inventory host
+boxctl run loadavg_analyzer --host prod-1
+
+# Fan out to a named group
+boxctl run disk_health --host group:web
+
+# Comma-separated selectors
+boxctl run nvme_health --host prod-1,prod-2 --format json
+
+# Override the inventory path
+boxctl run loadavg_analyzer --host prod-1 --inventory /etc/boxctl/hosts.yml
+```
+
+Inventory format (`~/.config/boxctl/hosts.yml` by default):
+
+```yaml
+hosts:
+  prod-1:
+    host: 10.0.0.1
+    user: boxctl-readonly
+    port: 22
+    identity: ~/.ssh/id_ed25519
+  prod-2:
+    host: 10.0.0.2
+groups:
+  web: [prod-1, prod-2]
+```
+
+SSH is invoked with `BatchMode=yes` and `ConnectTimeout=10`, so commands
+fail fast instead of hanging on password prompts. The script source is
+piped over stdin to `python3 -` on the remote, which means the only
+binary the restricted shell needs to permit is `python3`.
+
+### Provisioning a Read-Only Host
+
+`boxctl source prepare` provisions a `boxctl-readonly` user on a target
+host with a custom login shell that rejects interactive sessions, shell
+metacharacters (`; | & < > $ \``), and any command outside a narrow
+allowlist. Tool-level access (smartctl, mdadm, ...) is carried by the
+Unix user's own privileges, not by the SSH shell.
+
+```bash
+# List hosts in the current inventory
+boxctl source list
+boxctl source list --format json
+
+# Provision the restricted user on a target (requires passwordless sudo
+# as the connecting admin user)
+boxctl source prepare prod-1 --pubkey ~/.ssh/boxctl_ed25519.pub
+
+# Override the connecting user
+boxctl source prepare prod-1 --pubkey key.pub --admin-user root
+
+# Extend the SSH allowlist (each --allow is validated against an
+# injection-safe regex)
+boxctl source prepare prod-1 --pubkey key.pub --allow smartctl --allow mdadm
+```
+
+Re-running `prepare` is idempotent: it updates the shell in place, adds
+the public key if missing, and ensures the shell is registered in
+`/etc/shells`.
+
+### MCP Server
+
+`boxctl mcp` starts a Model Context Protocol server on stdio so Claude
+Code, Cursor, or Windsurf can discover and call scripts as tools:
+
+```bash
+# Smoke test
+boxctl mcp  # then ^C
+```
+
+Claude Code config snippet:
+
+```json
+{
+  "mcpServers": {
+    "boxctl": {
+      "command": "boxctl",
+      "args": ["mcp", "--scripts-dir", "/home/you/boxctl"]
+    }
+  }
+}
+```
+
+Four tools are exposed: `list_scripts`, `search_scripts`, `show_script`,
+`run_script`. Script output passes through the redaction filter by
+default; the `run_script` tool accepts `redact=False` for callers that
+need raw output. Install the optional extra: `pip install boxctl[mcp]`.
+
+### Secret Redaction
+
+All rendered output (CLI and MCP) is scrubbed for common secret shapes
+before it leaves the process:
+
+| Pattern | Replacement |
+|---------|-------------|
+| PEM private key blocks (RSA/EC/OpenSSH/ED25519) | `[REDACTED:pem-key]` |
+| AWS access/session keys (`AKIA...`, `ASIA...`) | `[REDACTED:aws-key]` |
+| JWTs (`eyJ...`) | `[REDACTED:jwt]` |
+| `sk-*` API tokens | `[REDACTED:api-key]` |
+| DB URI credentials (`postgres://user:pw@...`) | `postgres://[REDACTED:db-cred]@...` |
+
+`output.data` itself is never mutated -- redaction runs only at render
+time. Disable with `boxctl --no-redact` or `BOXCTL_NO_REDACT=1` in the
+environment (useful for local debugging).
+
 ### Requesting New Scripts
 
 When agents can't find a script for what they need, they can file a request:
@@ -249,9 +366,10 @@ Skills available:
 boxctl is designed for testability and agent integration:
 
 - **Context abstraction**: All system access goes through a `Context` class that can be mocked
-- **Output helper**: Scripts use `Output` class for consistent structured data
+- **Output helper**: Scripts use `Output` class for consistent structured data; redaction is applied at render time
 - **Metadata-driven**: YAML frontmatter in each script defines category, tags, requirements
-- **2600+ unit tests**: Full coverage without requiring real hardware or clusters
+- **Remote and MCP surfaces** reuse the same discovered scripts and metadata
+- **2867 unit tests**: Full coverage without requiring real hardware, clusters, or SSH
 
 ## Required Tools
 
@@ -269,8 +387,10 @@ Run `boxctl doctor` to check tool availability.
 
 ## Requirements
 
-- Python 3.10+
-- Tools vary by script (graceful degradation with exit code 2)
+- Python 3.11+
+- For remote execution: `ssh` on the client, `python3` on the target host
+- For `source prepare`: passwordless sudo for the connecting admin user
+- Other tools vary by script (graceful degradation with exit code 2)
 
 ## License
 
