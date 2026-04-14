@@ -13,15 +13,19 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import os
+
 from boxctl.core import needs_privilege
 from boxctl.core.discovery import discover_scripts
+from boxctl.core.redact import redact_value
 from boxctl.core.runner import run_script
 
 
 def _find(scripts_dir: Path, name: str):
     scripts = discover_scripts(scripts_dir)
+    target = name.removesuffix(".py")
     for s in scripts:
-        if s.name == name or s.name == f"{name}.py" or s.name[:-3] == name:
+        if s.name == name or s.name.removesuffix(".py") == target:
             return s
     return None
 
@@ -88,8 +92,14 @@ def run_script_tool(
     name: str,
     args: list[str] | None = None,
     timeout: int = 60,
+    redact: bool = True,
 ) -> dict[str, Any]:
-    """Execute a script and return captured stdout/stderr/exit-code."""
+    """Execute a script and return captured stdout/stderr/exit-code.
+
+    Secrets in stdout/stderr are redacted by default. Callers can pass
+    ``redact=False`` to get raw output; the env var ``BOXCTL_NO_REDACT=1``
+    also disables redaction (matching the CLI behavior).
+    """
     s = _find(scripts_dir, name)
     if s is None:
         return {"error": f"not found: {name}"}
@@ -99,10 +109,14 @@ def run_script_tool(
         timeout=timeout,
         use_sudo=needs_privilege(s.path),
     )
+    if os.environ.get("BOXCTL_NO_REDACT") == "1":
+        redact = False
+    stdout = redact_value(result.stdout) if redact else result.stdout
+    stderr = redact_value(result.stderr) if redact else result.stderr
     return {
         "exit_code": result.returncode if result.returncode is not None else -1,
-        "stdout": result.stdout,
-        "stderr": result.stderr,
+        "stdout": stdout,
+        "stderr": stderr,
         "timed_out": result.timed_out,
     }
 
@@ -127,12 +141,18 @@ def create_server(scripts_dir: Path):
 
     @server.tool(
         name="run_script",
-        description="Run a boxctl script and return its exit code, stdout, and stderr.",
+        description=(
+            "Run a boxctl script and return its exit code, stdout, and stderr. "
+            "Secrets in output are redacted by default; pass redact=False to disable."
+        ),
     )
     def run_script_tool_wrapper(
-        name: str, args: list[str] | None = None, timeout: int = 60
+        name: str,
+        args: list[str] | None = None,
+        timeout: int = 60,
+        redact: bool = True,
     ) -> dict[str, Any]:
-        return run_script_tool(scripts_dir, name, args=args, timeout=timeout)
+        return run_script_tool(scripts_dir, name, args=args, timeout=timeout, redact=redact)
 
     return server
 

@@ -89,6 +89,42 @@ class TestRunTool:
         assert result["timed_out"] is False
 
 
+class TestRunToolRedaction:
+    def _fake_script(self, tmp_path):
+        scripts_dir = tmp_path / "scripts" / "baremetal"
+        scripts_dir.mkdir(parents=True)
+        p = scripts_dir / "leaky.py"
+        p.write_text(
+            "#!/usr/bin/env python3\n"
+            "# boxctl:\n"
+            "#   category: baremetal/test\n"
+            "#   tags: [test]\n"
+            "#   requires: []\n"
+            "#   privilege: user\n"
+            "#   related: []\n"
+            "#   brief: leak an AWS key for redaction tests\n"
+            "print('aws AKIAIOSFODNN7EXAMPLE leaked')\n"
+        )
+        return tmp_path
+
+    def test_default_redacts_stdout(self, tmp_path):
+        root = self._fake_script(tmp_path)
+        result = run_script_tool(root, "leaky", timeout=10)
+        assert "AKIA" not in result["stdout"]
+        assert "[REDACTED:aws-key]" in result["stdout"]
+
+    def test_opt_out_preserves_raw(self, tmp_path):
+        root = self._fake_script(tmp_path)
+        result = run_script_tool(root, "leaky", timeout=10, redact=False)
+        assert "AKIAIOSFODNN7EXAMPLE" in result["stdout"]
+
+    def test_env_var_disables(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("BOXCTL_NO_REDACT", "1")
+        root = self._fake_script(tmp_path)
+        result = run_script_tool(root, "leaky", timeout=10)
+        assert "AKIAIOSFODNN7EXAMPLE" in result["stdout"]
+
+
 class TestCreateServer:
     def test_registers_four_tools(self):
         server = create_server(SCRIPTS_DIR)
