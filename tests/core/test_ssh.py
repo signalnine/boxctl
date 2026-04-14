@@ -191,6 +191,121 @@ class TestCLI:
         )
         assert args.inventory == "/tmp/h.yml"
 
+    def test_plain_format_per_host_blocks(self, tmp_path, monkeypatch, capsys):
+        from boxctl.cli import main
+        from boxctl.core import ssh as ssh_mod
+
+        inv = tmp_path / "h.yml"
+        inv.write_text(
+            """
+hosts:
+  p1: {host: 10.0.0.1, user: u}
+  p2: {host: 10.0.0.2, user: u}
+groups:
+  g: [p1, p2]
+"""
+        )
+
+        def fake_remote(script_path, host, args, timeout, runner=None):
+            return {
+                "host": host.name,
+                "exit_code": 0 if host.name == "p1" else 7,
+                "stdout": f"{host.name} stdout\n",
+                "stderr": "" if host.name == "p1" else "bad\n",
+                "timed_out": False,
+            }
+
+        monkeypatch.setattr(ssh_mod, "run_script_remote", fake_remote)
+        repo = Path(__file__).resolve().parents[2]
+        rc = main(
+            [
+                "--scripts-dir",
+                str(repo),
+                "run",
+                "loadavg_analyzer",
+                "--host",
+                "group:g",
+                "--inventory",
+                str(inv),
+            ]
+        )
+        # Worst-case exit code (7 > 0).
+        assert rc == 7
+        out = capsys.readouterr()
+        assert "=== p1 [OK] ===" in out.out
+        assert "=== p2 [EXIT 7] ===" in out.out
+        assert "p1 stdout" in out.out
+        assert "bad" in out.err
+
+    def test_json_format_still_json(self, tmp_path, monkeypatch, capsys):
+        from boxctl.cli import main
+        from boxctl.core import ssh as ssh_mod
+
+        inv = tmp_path / "h.yml"
+        inv.write_text("hosts: {p1: {host: 1.1.1.1, user: u}}\ngroups: {}\n")
+
+        def fake_remote(script_path, host, args, timeout, runner=None):
+            return {
+                "host": "p1",
+                "exit_code": 0,
+                "stdout": "x",
+                "stderr": "",
+                "timed_out": False,
+            }
+
+        monkeypatch.setattr(ssh_mod, "run_script_remote", fake_remote)
+        repo = Path(__file__).resolve().parents[2]
+        rc = main(
+            [
+                "--scripts-dir",
+                str(repo),
+                "--format",
+                "json",
+                "run",
+                "loadavg_analyzer",
+                "--host",
+                "p1",
+                "--inventory",
+                str(inv),
+            ]
+        )
+        assert rc == 0
+        out = capsys.readouterr().out
+        assert out.startswith("{")
+        assert '"host": "p1"' in out
+
+    def test_ssh_not_found_exits_2(self, tmp_path, monkeypatch):
+        from boxctl.cli import main
+        from boxctl.core import ssh as ssh_mod
+
+        inv = tmp_path / "h.yml"
+        inv.write_text("hosts: {p1: {host: h, user: u}}\ngroups: {}\n")
+
+        def fake_remote(script_path, host, args, timeout, runner=None):
+            return {
+                "host": "p1",
+                "exit_code": 2,
+                "stdout": "",
+                "stderr": "ssh not found",
+                "timed_out": False,
+            }
+
+        monkeypatch.setattr(ssh_mod, "run_script_remote", fake_remote)
+        repo = Path(__file__).resolve().parents[2]
+        rc = main(
+            [
+                "--scripts-dir",
+                str(repo),
+                "run",
+                "loadavg_analyzer",
+                "--host",
+                "p1",
+                "--inventory",
+                str(inv),
+            ]
+        )
+        assert rc == 2
+
     def test_unknown_selector_exits_2(self, tmp_path, monkeypatch, capsys):
         from boxctl.cli import main
 

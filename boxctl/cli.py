@@ -494,11 +494,21 @@ def _run_remote(script, args: argparse.Namespace) -> int:
         return 2
 
     worst = 0
+    fmt = getattr(args, "format", "plain")
     for host in targets:
         res = run_script_remote(
             script.path, host, args=args.args, timeout=args.timeout
         )
-        print(_json.dumps(res))
+        if fmt == "json":
+            print(_json.dumps(res))
+        else:
+            rc = res["exit_code"]
+            status = "OK" if rc == 0 else ("TIMEOUT" if res["timed_out"] else f"EXIT {rc}")
+            print(f"=== {res['host']} [{status}] ===")
+            if res["stdout"]:
+                print(res["stdout"], end="" if res["stdout"].endswith("\n") else "\n")
+            if res["stderr"]:
+                print(res["stderr"], file=sys.stderr, end="" if res["stderr"].endswith("\n") else "\n")
         rc = res["exit_code"] if res["exit_code"] is not None else 1
         worst = max(worst, rc if rc >= 0 else 2)
     return worst
