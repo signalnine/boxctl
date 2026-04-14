@@ -1,9 +1,17 @@
 """Tests for zfs_health script."""
 
+from datetime import datetime, timedelta
+
 import pytest
 from pathlib import Path
 
 from boxctl.core.output import Output
+
+
+def _recent_scrub_line() -> str:
+    """Format a scrub date a few days ago so fixtures don't age out."""
+    d = datetime.now() - timedelta(days=5)
+    return d.strftime("%a %b %d %H:%M:%S %Y")
 
 
 @pytest.fixture
@@ -32,8 +40,9 @@ def zpool_list_degraded(fixtures_dir):
 
 @pytest.fixture
 def zpool_status_healthy(fixtures_dir):
-    """Load healthy pool status."""
-    return (fixtures_dir / "storage" / "zpool_status_healthy.txt").read_text()
+    """Load healthy pool status (scrub date re-templated to stay recent)."""
+    text = (fixtures_dir / "storage" / "zpool_status_healthy.txt").read_text()
+    return text.replace("Wed Jan 29 10:00:00 2026", _recent_scrub_line())
 
 
 @pytest.fixture

@@ -1,9 +1,17 @@
 """Tests for ssl_cert_scanner script."""
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 from pathlib import Path
 
 from boxctl.core.output import Output
+
+
+def _openssl_date(dt: datetime) -> str:
+    # openssl format: "%b %e %H:%M:%S %Y GMT" (space-padded day). Keep days >= 10
+    # so the plain zero-padded output matches openssl's single-space variant.
+    return dt.strftime("%b %d %H:%M:%S %Y GMT")
 
 
 @pytest.fixture
@@ -14,8 +22,15 @@ def cert_valid(fixtures_dir):
 
 @pytest.fixture
 def cert_expiring(fixtures_dir):
-    """Load expiring soon certificate openssl output."""
-    return (fixtures_dir / "security" / "openssl_cert_expiring_soon.txt").read_text()
+    """Load expiring-soon cert with notAfter re-templated to ~20 days from now."""
+    text = (fixtures_dir / "security" / "openssl_cert_expiring_soon.txt").read_text()
+    now = datetime.now(timezone.utc)
+    not_before = _openssl_date(now - timedelta(days=40))
+    not_after = _openssl_date(now + timedelta(days=20))
+    return (
+        text.replace("Jan 15 00:00:00 2026 GMT", not_before)
+            .replace("Feb 20 23:59:59 2026 GMT", not_after)
+    )
 
 
 @pytest.fixture

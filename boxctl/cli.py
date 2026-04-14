@@ -1,6 +1,7 @@
 """Command-line interface for boxctl."""
 
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -34,6 +35,11 @@ def create_parser() -> argparse.ArgumentParser:
         choices=["plain", "json"],
         default="plain",
         help="Output format (default: plain)",
+    )
+    parser.add_argument(
+        "--no-redact",
+        action="store_true",
+        help="Disable automatic secret redaction in script output",
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
@@ -420,6 +426,9 @@ def main(argv: list[str] | None = None) -> int:
     """Main entry point."""
     parser = create_parser()
     args = parser.parse_args(argv)
+
+    if getattr(args, "no_redact", False):
+        os.environ["BOXCTL_NO_REDACT"] = "1"
 
     if args.command is None:
         parser.print_help()

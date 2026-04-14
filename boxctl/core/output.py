@@ -1,7 +1,10 @@
 """Structured output helper for scripts."""
 
 import json
+import os
 from typing import Any
+
+from boxctl.core.redact import redact_value
 
 
 class Output:
@@ -60,13 +63,22 @@ class Output:
                 lines.append(f"{key}: {value}")
         return "\n".join(lines)
 
-    def render(self, format: str = "plain", title: str | None = None, warn_only: bool = False) -> None:
+    def render(
+        self,
+        format: str = "plain",
+        title: str | None = None,
+        warn_only: bool = False,
+        redact: bool = True,
+    ) -> None:
         """Print output in the specified format.
 
         Args:
             format: Output format - "json" or "plain"
             title: Optional title for plain text output
             warn_only: If True, only print if issues or warnings exist
+            redact: If True (default), scrub secrets (PEM keys, AWS keys,
+                JWTs, sk-* tokens, DB credentials) from rendered output.
+                ``self.data`` itself is not mutated.
         """
         if self._printed:
             return
@@ -81,13 +93,18 @@ class Output:
             if not issues and not warnings:
                 return
 
+        if os.environ.get("BOXCTL_NO_REDACT") == "1":
+            redact = False
+        view = redact_value(self.data) if redact else self.data
         if format == "json":
-            print(self.to_json())
+            print(json.dumps(view, indent=2, default=str))
         else:
-            self._render_plain(title)
+            self._render_plain(title, view)
 
-    def _render_plain(self, title: str | None = None) -> None:
+    def _render_plain(self, title: str | None = None, data: dict | None = None) -> None:
         """Render output as formatted plain text."""
+        if data is None:
+            data = self.data
         lines = []
 
         # Title
@@ -97,7 +114,7 @@ class Output:
             lines.append("")
 
         # Status/summary at top if present
-        status = self.data.get("status")
+        status = data.get("status")
         if status:
             status_upper = status.upper()
             if status in ("healthy", "ok"):
@@ -110,13 +127,13 @@ class Output:
 
         # Main data (skip status, issues, timestamp which are handled separately)
         skip_keys = {"status", "issues", "timestamp", "errors", "warnings"}
-        for key, value in self.data.items():
+        for key, value in data.items():
             if key in skip_keys:
                 continue
             self._render_value(lines, key, value, indent=0)
 
         # Issues section
-        issues = self.data.get("issues", [])
+        issues = data.get("issues", [])
         if issues:
             lines.append("")
             lines.append("Issues:")
@@ -132,7 +149,7 @@ class Output:
             lines.append("[OK] No issues detected")
 
         # Warnings section
-        warnings = self.data.get("warnings", [])
+        warnings = data.get("warnings", [])
         if warnings:
             lines.append("")
             lines.append("Warnings:")

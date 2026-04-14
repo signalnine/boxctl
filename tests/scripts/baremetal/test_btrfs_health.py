@@ -1,9 +1,16 @@
 """Tests for btrfs_health script."""
 
+from datetime import datetime, timedelta
+
 import pytest
 from pathlib import Path
 
 from boxctl.core.output import Output
+
+
+def _recent_scrub_line() -> str:
+    d = datetime.now() - timedelta(days=5)
+    return d.strftime("%a %b %d %H:%M:%S %Y")
 
 
 @pytest.fixture
@@ -32,8 +39,9 @@ def btrfs_device_stats_errors(fixtures_dir):
 
 @pytest.fixture
 def btrfs_scrub_healthy(fixtures_dir):
-    """Load healthy scrub status."""
-    return (fixtures_dir / "storage" / "btrfs_scrub_healthy.txt").read_text()
+    """Load healthy scrub status (scrub date re-templated to stay recent)."""
+    text = (fixtures_dir / "storage" / "btrfs_scrub_healthy.txt").read_text()
+    return text.replace("Wed Jan 29 10:00:00 2026", _recent_scrub_line())
 
 
 @pytest.fixture
