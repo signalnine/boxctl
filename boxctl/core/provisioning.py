@@ -12,6 +12,7 @@ genuinely need non-python invocations over SSH.
 
 from __future__ import annotations
 
+import re
 import shlex
 import subprocess
 from pathlib import Path
@@ -27,10 +28,28 @@ _BASE_ALLOW = ("python3", "/usr/bin/python3", "true")
 
 _META_CHARS = ";|&<>$`\n"
 
+_ALLOW_RE = re.compile(r"^[A-Za-z0-9_./-]+$")
+
+
+def _validate_allow_entry(name: str) -> str:
+    """Reject allow-list entries containing shell metacharacters or spaces.
+
+    Entries land in a shell ``case`` pattern, so an unvalidated value like
+    ``"smartctl; rm -rf /"`` would break script generation at deploy time
+    (and, if the shell were ever un-sandboxed, open a real injection path).
+    """
+    if not name or not _ALLOW_RE.match(name):
+        raise ValueError(
+            f"invalid allow-list entry: {name!r} "
+            f"(must be non-empty and match {_ALLOW_RE.pattern})"
+        )
+    return name
+
 
 def build_restricted_shell(extra_allowed: list[str] | None = None) -> str:
     """Render the /bin/sh script that gates SSH_ORIGINAL_COMMAND."""
-    allow = list(_BASE_ALLOW) + list(extra_allowed or [])
+    validated = [_validate_allow_entry(e) for e in (extra_allowed or [])]
+    allow = list(_BASE_ALLOW) + validated
     bare_pattern = "|".join(allow)
     # Rendered for error messages.
     allowed_list = ", ".join(allow)

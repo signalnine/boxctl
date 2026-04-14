@@ -29,6 +29,29 @@ class TestRestrictedShell:
         assert "smartctl" in s
         assert "mdadm" in s
 
+    @pytest.mark.parametrize(
+        "bad",
+        [
+            "smartctl; rm -rf /",
+            "smartctl | cat",
+            "foo`id`",
+            "foo$bar",
+            "foo bar",
+            "",
+            "foo\nbar",
+            "foo&bar",
+        ],
+    )
+    def test_rejects_injection(self, bad):
+        with pytest.raises(ValueError):
+            build_restricted_shell(extra_allowed=[bad])
+
+    def test_accepts_safe_names(self):
+        # Paths, dashes, underscores, dots all fine.
+        build_restricted_shell(
+            extra_allowed=["/usr/local/bin/smartctl", "a-b_c.py"]
+        )
+
     def test_rejects_metacharacters(self):
         s = build_restricted_shell()
         # Script must inspect for shell metacharacters.

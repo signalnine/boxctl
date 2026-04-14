@@ -551,14 +551,18 @@ def cmd_source(args: argparse.Namespace) -> int:
             return 2
 
         host = inv.hosts[args.target]
-        result = prepare_host(
-            host,
-            username=args.username,
-            pubkey=pub_path.read_text(),
-            admin_user=args.admin_user,
-            extra_allowed=args.allow or None,
-            timeout=args.timeout,
-        )
+        try:
+            result = prepare_host(
+                host,
+                username=args.username,
+                pubkey=pub_path.read_text(),
+                admin_user=args.admin_user,
+                extra_allowed=args.allow or None,
+                timeout=args.timeout,
+            )
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 2
         print(_json.dumps(result, indent=2))
         return 0 if result["ok"] else 1
 
