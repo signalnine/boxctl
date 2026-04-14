@@ -114,6 +114,34 @@ def create_parser() -> argparse.ArgumentParser:
         help="Run boxctl as an MCP (Model Context Protocol) server over stdio",
     )
 
+    # source command (inventory + provisioning)
+    source_parser = subparsers.add_parser(
+        "source",
+        help="Manage the host inventory used by --host and provision read-only access",
+    )
+    source_sub = source_parser.add_subparsers(dest="source_command", help="source subcommand")
+
+    source_list = source_sub.add_parser("list", help="List configured hosts")
+    source_list.add_argument("--inventory", help="Path to hosts inventory YAML")
+
+    source_prep = source_sub.add_parser(
+        "prepare",
+        help="Provision a boxctl-readonly user with a restricted shell on a host",
+    )
+    source_prep.add_argument("target", help="Host name from inventory")
+    source_prep.add_argument("--pubkey", required=True, help="Path to SSH public key file")
+    source_prep.add_argument("--username", default="boxctl-readonly", help="Remote user to create")
+    source_prep.add_argument("--admin-user", help="Connecting user (defaults to inventory user)")
+    source_prep.add_argument(
+        "--allow",
+        action="append",
+        default=[],
+        dest="allow",
+        help="Extra command name to permit (repeatable)",
+    )
+    source_prep.add_argument("--inventory", help="Path to hosts inventory YAML")
+    source_prep.add_argument("--timeout", type=int, default=60)
+
     # request command
     request_parser = subparsers.add_parser(
         "request",
@@ -476,6 +504,68 @@ def _run_remote(script, args: argparse.Namespace) -> int:
     return worst
 
 
+def cmd_source(args: argparse.Namespace) -> int:
+    """Inventory + provisioning commands."""
+    import json as _json
+
+    from boxctl.core.ssh import DEFAULT_INVENTORY, load_hosts
+
+    sub = getattr(args, "source_command", None)
+    if sub is None:
+        print("Usage: boxctl source {list,prepare} ...", file=sys.stderr)
+        return 2
+
+    inv_path = Path(args.inventory) if args.inventory else DEFAULT_INVENTORY
+    inv = load_hosts(inv_path)
+
+    if sub == "list":
+        if args.format == "json":
+            out = {
+                name: {
+                    "host": h.host,
+                    "user": h.user,
+                    "port": h.port,
+                    "identity": h.identity,
+                }
+                for name, h in inv.hosts.items()
+            }
+            print(_json.dumps(out, indent=2))
+        else:
+            if not inv.hosts:
+                print("No hosts configured.")
+                return 0
+            for name, h in sorted(inv.hosts.items()):
+                suffix = f":{h.port}" if h.port != 22 else ""
+                print(f"{name:20} {h.user}@{h.host}{suffix}")
+        return 0
+
+    if sub == "prepare":
+        from boxctl.core.provisioning import prepare_host
+
+        pub_path = Path(args.pubkey)
+        if not pub_path.exists():
+            print(f"Error: pubkey not found: {pub_path}", file=sys.stderr)
+            return 2
+        if args.target not in inv.hosts:
+            print(f"Error: unknown host: {args.target}", file=sys.stderr)
+            return 2
+
+        host = inv.hosts[args.target]
+        result = prepare_host(
+            host,
+            username=args.username,
+            pubkey=pub_path.read_text(),
+            admin_user=args.admin_user,
+            extra_allowed=args.allow or None,
+            timeout=args.timeout,
+        )
+        print(_json.dumps(result, indent=2))
+        return 0 if result["ok"] else 1
+
+    print(f"Unknown source subcommand: {sub}", file=sys.stderr)
+    return 2
+
+
 def cmd_mcp(args: argparse.Namespace) -> int:
     """Run boxctl as an MCP server on stdio."""
     from boxctl.core.mcp_server import serve_stdio
@@ -505,6 +595,7 @@ def main(argv: list[str] | None = None) -> int:
         "lint": cmd_lint,
         "request": cmd_request,
         "mcp": cmd_mcp,
+        "source": cmd_source,
     }
 
     return commands[args.command](args)
