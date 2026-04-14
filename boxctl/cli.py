@@ -78,6 +78,16 @@ def create_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Run with sudo (auto-enabled for privileged scripts)",
     )
+    run_parser.add_argument(
+        "--host",
+        "--hosts",
+        dest="host",
+        help="Run on remote host(s). Accepts name, comma-separated names, or 'group:<name>'.",
+    )
+    run_parser.add_argument(
+        "--inventory",
+        help="Path to hosts inventory YAML (default: ~/.config/boxctl/hosts.yml)",
+    )
 
     # show command
     show_parser = subparsers.add_parser("show", help="Show script details")
@@ -150,7 +160,7 @@ def cmd_list(args: argparse.Namespace) -> int:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    """Run a script."""
+    """Run a script locally or over SSH."""
     scripts = discover_scripts(args.scripts_dir)
     matches = [s for s in scripts if s.name == args.script or s.name == f"{args.script}.py"]
 
@@ -159,6 +169,10 @@ def cmd_run(args: argparse.Namespace) -> int:
         return 2
 
     script = matches[0]
+
+    if getattr(args, "host", None):
+        return _run_remote(script, args)
+
     use_sudo = args.sudo or needs_privilege(script.path)
 
     result = run_script(
@@ -426,6 +440,40 @@ def cmd_doctor(args: argparse.Namespace) -> int:
             print("✓ All required tools available")
 
     return 1 if missing_tools else 0
+
+
+def _run_remote(script, args: argparse.Namespace) -> int:
+    """Fan out a script over SSH to one or more inventory hosts."""
+    import json as _json
+
+    from boxctl.core.ssh import (
+        DEFAULT_INVENTORY,
+        load_hosts,
+        resolve_targets,
+        run_script_remote,
+    )
+
+    inv_path = Path(args.inventory) if args.inventory else DEFAULT_INVENTORY
+    inv = load_hosts(inv_path)
+    try:
+        targets = resolve_targets(inv, args.host)
+    except KeyError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 2
+
+    if not targets:
+        print(f"Error: no hosts matched selector: {args.host}", file=sys.stderr)
+        return 2
+
+    worst = 0
+    for host in targets:
+        res = run_script_remote(
+            script.path, host, args=args.args, timeout=args.timeout
+        )
+        print(_json.dumps(res))
+        rc = res["exit_code"] if res["exit_code"] is not None else 1
+        worst = max(worst, rc if rc >= 0 else 2)
+    return worst
 
 
 def cmd_mcp(args: argparse.Namespace) -> int:

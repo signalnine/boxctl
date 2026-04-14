@@ -1,0 +1,214 @@
+"""Tests for SSH remote execution."""
+
+import subprocess
+from pathlib import Path
+
+import pytest
+
+from boxctl.core.ssh import (
+    HostConfig,
+    Inventory,
+    build_ssh_cmd,
+    load_hosts,
+    resolve_targets,
+    run_script_remote,
+)
+
+
+@pytest.fixture
+def inventory_file(tmp_path):
+    p = tmp_path / "hosts.yml"
+    p.write_text(
+        """
+hosts:
+  prod-1:
+    host: 10.0.0.1
+    user: boxctl
+    port: 2222
+    identity: ~/.ssh/id_ed25519
+  prod-2:
+    host: 10.0.0.2
+groups:
+  web: [prod-1, prod-2]
+"""
+    )
+    return p
+
+
+class TestLoadHosts:
+    def test_loads_full_entry(self, inventory_file):
+        inv = load_hosts(inventory_file)
+        h = inv.hosts["prod-1"]
+        assert h.name == "prod-1"
+        assert h.host == "10.0.0.1"
+        assert h.user == "boxctl"
+        assert h.port == 2222
+        assert h.identity == "~/.ssh/id_ed25519"
+
+    def test_defaults(self, inventory_file):
+        inv = load_hosts(inventory_file)
+        h = inv.hosts["prod-2"]
+        assert h.host == "10.0.0.2"
+        assert h.port == 22
+        assert h.identity is None
+
+    def test_groups(self, inventory_file):
+        inv = load_hosts(inventory_file)
+        assert inv.groups["web"] == ["prod-1", "prod-2"]
+
+    def test_missing_file_empty(self, tmp_path):
+        inv = load_hosts(tmp_path / "nope.yml")
+        assert inv.hosts == {}
+        assert inv.groups == {}
+
+
+class TestResolveTargets:
+    def test_single_name(self, inventory_file):
+        inv = load_hosts(inventory_file)
+        r = resolve_targets(inv, "prod-1")
+        assert [h.name for h in r] == ["prod-1"]
+
+    def test_group_prefix(self, inventory_file):
+        inv = load_hosts(inventory_file)
+        r = resolve_targets(inv, "group:web")
+        assert [h.name for h in r] == ["prod-1", "prod-2"]
+
+    def test_comma_separated(self, inventory_file):
+        inv = load_hosts(inventory_file)
+        r = resolve_targets(inv, "prod-1,prod-2")
+        assert [h.name for h in r] == ["prod-1", "prod-2"]
+
+    def test_unknown_name(self, inventory_file):
+        inv = load_hosts(inventory_file)
+        with pytest.raises(KeyError):
+            resolve_targets(inv, "nope")
+
+    def test_unknown_group(self, inventory_file):
+        inv = load_hosts(inventory_file)
+        with pytest.raises(KeyError):
+            resolve_targets(inv, "group:nope")
+
+
+class TestBuildSSHCmd:
+    def test_basic(self):
+        h = HostConfig(name="a", host="h.local", user="u", port=22)
+        cmd = build_ssh_cmd(h, "echo hi")
+        assert cmd[0] == "ssh"
+        assert "u@h.local" in cmd
+        assert "echo hi" in cmd
+        # Default port must NOT be added.
+        assert "-p" not in cmd
+
+    def test_custom_port(self):
+        h = HostConfig(name="a", host="h.local", user="u", port=2222)
+        cmd = build_ssh_cmd(h, "echo hi")
+        i = cmd.index("-p")
+        assert cmd[i + 1] == "2222"
+
+    def test_identity(self):
+        h = HostConfig(name="a", host="h.local", user="u", port=22, identity="/k.pem")
+        cmd = build_ssh_cmd(h, "x")
+        i = cmd.index("-i")
+        assert cmd[i + 1] == "/k.pem"
+
+    def test_safety_options(self):
+        h = HostConfig(name="a", host="h.local", user="u", port=22)
+        cmd = build_ssh_cmd(h, "x")
+        joined = " ".join(cmd)
+        assert "BatchMode=yes" in joined
+        assert "ConnectTimeout=" in joined
+
+
+class TestRunScriptRemote:
+    def test_success(self, tmp_path):
+        script = tmp_path / "s.py"
+        script.write_text("print('hi')\n")
+        h = HostConfig(name="a", host="h", user="u", port=22)
+
+        class R:
+            def __call__(self, cmd, input, capture_output, text, timeout):
+                assert cmd[0] == "ssh"
+                assert "python3 -" in " ".join(cmd)
+                assert "print('hi')" in input
+                return subprocess.CompletedProcess(cmd, 0, stdout='{"ok":1}', stderr="")
+
+        res = run_script_remote(script, h, args=["--format", "json"], timeout=30, runner=R())
+        assert res == {"host": "a", "exit_code": 0, "stdout": '{"ok":1}', "stderr": "", "timed_out": False}
+
+    def test_timeout(self, tmp_path):
+        script = tmp_path / "s.py"
+        script.write_text("x=1\n")
+        h = HostConfig(name="a", host="h", user="u", port=22)
+
+        def runner(cmd, **kw):
+            raise subprocess.TimeoutExpired(cmd, timeout=1)
+
+        res = run_script_remote(script, h, args=[], timeout=1, runner=runner)
+        assert res["timed_out"] is True
+        assert res["exit_code"] == -1
+        assert res["host"] == "a"
+
+    def test_ssh_missing(self, tmp_path):
+        script = tmp_path / "s.py"
+        script.write_text("x=1\n")
+        h = HostConfig(name="a", host="h", user="u", port=22)
+
+        def runner(cmd, **kw):
+            raise FileNotFoundError("ssh")
+
+        res = run_script_remote(script, h, args=[], timeout=5, runner=runner)
+        assert res["exit_code"] == 2
+        assert "ssh" in res["stderr"].lower()
+
+    def test_args_appended(self, tmp_path):
+        script = tmp_path / "s.py"
+        script.write_text("pass\n")
+        h = HostConfig(name="a", host="h", user="u", port=22)
+        seen = {}
+
+        def runner(cmd, **kw):
+            seen["cmd"] = cmd
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        run_script_remote(script, h, args=["--verbose", "-x", "1"], timeout=5, runner=runner)
+        joined = " ".join(seen["cmd"])
+        assert "--verbose" in joined
+        assert "-x" in joined
+
+
+class TestCLI:
+    def test_run_accepts_host_flag(self):
+        from boxctl.cli import create_parser
+        parser = create_parser()
+        args = parser.parse_args(["run", "loadavg_analyzer", "--host", "prod-1"])
+        assert args.host == "prod-1"
+
+    def test_run_accepts_inventory_flag(self):
+        from boxctl.cli import create_parser
+        parser = create_parser()
+        args = parser.parse_args(
+            ["run", "loadavg_analyzer", "--host", "prod-1", "--inventory", "/tmp/h.yml"]
+        )
+        assert args.inventory == "/tmp/h.yml"
+
+    def test_unknown_selector_exits_2(self, tmp_path, monkeypatch, capsys):
+        from boxctl.cli import main
+
+        inv = tmp_path / "hosts.yml"
+        inv.write_text("hosts: {}\ngroups: {}\n")
+        monkeypatch.chdir(tmp_path)
+        # Point scripts-dir at repo so 'loadavg_analyzer' resolves.
+        repo = Path(__file__).resolve().parents[2]
+        rc = main(
+            [
+                "--scripts-dir",
+                str(repo),
+                "run",
+                "loadavg_analyzer",
+                "--host",
+                "nope",
+                "--inventory",
+                str(inv),
+            ]
+        )
+        assert rc == 2
