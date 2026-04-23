@@ -68,3 +68,45 @@ class TestOutput:
         output.emit({"key2": "value2"})
         assert output.data["key1"] == "value1"
         assert output.data["key2"] == "value2"
+
+
+class TestRenderNonFiniteFloats:
+    """render() must not crash when scripts emit NaN/Inf floats.
+
+    Real scripts produce these (e.g. ratio computations with zero denominators
+    in scripts/baremetal/softnet_backlog_monitor.py and scripts/k8s/zone_balance.py),
+    so the framework's plain renderer cannot blow up on them.
+    """
+
+    def test_plain_render_handles_inf(self, capsys):
+        o = Output()
+        o.emit({"ratio": float("inf")})
+        o.render(format="plain")
+        out = capsys.readouterr().out
+        assert "Ratio:" in out
+        assert "inf" in out.lower()
+
+    def test_plain_render_handles_negative_inf(self, capsys):
+        o = Output()
+        o.emit({"delta": float("-inf")})
+        o.render(format="plain")
+        out = capsys.readouterr().out
+        assert "Delta:" in out
+        assert "inf" in out.lower()
+
+    def test_plain_render_handles_nan(self, capsys):
+        o = Output()
+        o.emit({"score": float("nan")})
+        o.render(format="plain")
+        out = capsys.readouterr().out
+        assert "Score:" in out
+        assert "nan" in out.lower()
+
+    def test_plain_render_handles_nested_inf(self, capsys):
+        o = Output()
+        o.emit({"stats": {"ratio": float("inf"), "count": 5}})
+        o.render(format="plain")
+        out = capsys.readouterr().out
+        assert "Ratio:" in out
+        assert "inf" in out.lower()
+        assert "Count:" in out

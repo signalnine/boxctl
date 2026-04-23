@@ -1,6 +1,7 @@
 """Structured output helper for scripts."""
 
 import json
+import math
 import os
 from typing import Any
 
@@ -204,8 +205,11 @@ class Output:
         elif isinstance(value, bool):
             lines.append(f"{prefix}{display_key}: {'yes' if value else 'no'}")
         elif isinstance(value, float):
-            # Format floats nicely
-            if value == int(value):
+            # Non-finite floats (NaN, +/-Inf) cannot be coerced to int and
+            # break numeric formatting; emit their str repr unchanged.
+            if not math.isfinite(value):
+                lines.append(f"{prefix}{display_key}: {value}")
+            elif value == int(value):
                 lines.append(f"{prefix}{display_key}: {int(value)}")
             elif abs(value) < 0.01 or abs(value) >= 1000:
                 lines.append(f"{prefix}{display_key}: {value:.2e}")
