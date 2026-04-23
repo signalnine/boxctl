@@ -149,6 +149,28 @@ class TestLintAll:
         assert total_errors >= 1  # Missing category is an error
         assert total_warnings >= 1  # Invalid format is a warning
 
+    def test_skips_files_without_boxctl_header(self, tmp_path):
+        """lint_all ignores .py files that don't claim to be boxctl scripts."""
+        (tmp_path / "script.py").write_text(VALID_SCRIPT)
+        (tmp_path / "__init__.py").write_text('"""Package init."""\n')
+        (tmp_path / "helper.py").write_text(NO_HEADER)
+
+        results = lint_all(tmp_path)
+
+        assert len(results) == 1
+        assert results[0].path.name == "script.py"
+
+    def test_still_reports_malformed_boxctl_headers(self, tmp_path):
+        """lint_all still catches files with a boxctl header that is broken."""
+        (tmp_path / "bad.py").write_text(MISSING_CATEGORY)
+        (tmp_path / "__init__.py").write_text('"""Package init."""\n')
+
+        results = lint_all(tmp_path)
+
+        assert len(results) == 1
+        assert results[0].path.name == "bad.py"
+        assert results[0].errors
+
 
 class TestLintResult:
     """Tests for LintResult dataclass."""
