@@ -8,11 +8,71 @@ import pytest
 from boxctl.core.ssh import (
     HostConfig,
     Inventory,
+    _shquote,
     build_ssh_cmd,
     load_hosts,
     resolve_targets,
     run_script_remote,
 )
+
+
+class TestShquote:
+    def test_empty_string_quotes_to_empty_single_quotes(self):
+        assert _shquote("") == "''"
+
+    def test_plain_alnum_unquoted(self):
+        assert _shquote("abc123") == "abc123"
+
+    def test_safe_cli_chars_unquoted(self):
+        assert _shquote("--flag=value/path.txt") == "--flag=value/path.txt"
+        assert _shquote("a,b:c+d@e%f-g_h.i") == "a,b:c+d@e%f-g_h.i"
+
+    @pytest.mark.parametrize(
+        "s",
+        [
+            "a b",
+            "a\tb",
+            "a\nb",
+            'a"b',
+            "a'b",
+            "a\\b",
+            "a$b",
+            "a`b",
+            "a;b",
+            "a|b",
+            "a&b",
+            "a>b",
+            "a<b",
+            "a(b)",
+            "*",
+            "?",
+            "[x]",
+            "~user",
+            "{a,b}",
+            "#comment",
+            "!bang",
+        ],
+    )
+    def test_metacharacters_trigger_quoting(self, s):
+        quoted = _shquote(s)
+        assert quoted != s, f"expected {s!r} to be quoted but got {quoted!r}"
+        assert quoted.startswith("'") and quoted.endswith("'")
+
+    def test_roundtrip_through_sh(self):
+        # Single quote inside value must survive a real sh -c echo.
+        import subprocess as sp
+
+        for value in ["it's", "a b c", "a;rm -rf /tmp/x", "$(id)", "`id`", "*"]:
+            quoted = _shquote(value)
+            r = sp.run(
+                ["sh", "-c", f"printf %s {quoted}"],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            assert r.stdout == value, (
+                f"{value!r} survived as {r.stdout!r} (quoted={quoted!r})"
+            )
 
 
 @pytest.fixture

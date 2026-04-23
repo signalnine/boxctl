@@ -8,6 +8,7 @@ remote host and captures structured output. Hosts live in a YAML inventory
 from __future__ import annotations
 
 import getpass
+import shlex
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -137,9 +138,7 @@ def run_script_remote(
 
 
 def _shquote(s: str) -> str:
-    if not s or any(c in s for c in " \t\n\"'\\$`"):
-        return "'" + s.replace("'", "'\\''") + "'"
-    return s
+    return shlex.quote(s)
 
 
 DEFAULT_INVENTORY = Path.home() / ".config" / "boxctl" / "hosts.yml"
