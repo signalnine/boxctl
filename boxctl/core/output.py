@@ -85,18 +85,27 @@ class Output:
             return
         self._printed = True
 
-        if not self.data:
+        if not self.data and not self.errors and not self.warnings:
             return
 
+        # Merge messages recorded via output.error()/output.warning() into the
+        # rendered view so failure paths that don't emit data still surface.
+        merged = dict(self.data)
+        if self.errors:
+            merged["errors"] = list(merged.get("errors", [])) + list(self.errors)
+        if self.warnings:
+            merged["warnings"] = list(merged.get("warnings", [])) + list(self.warnings)
+
         if warn_only:
-            issues = self.data.get("issues", [])
-            warnings = self.data.get("warnings", [])
-            if not issues and not warnings:
+            issues = merged.get("issues", [])
+            warnings = merged.get("warnings", [])
+            errors = merged.get("errors", [])
+            if not issues and not warnings and not errors:
                 return
 
         if os.environ.get("BOXCTL_NO_REDACT") == "1":
             redact = False
-        view = redact_value(self.data) if redact else self.data
+        view = redact_value(merged) if redact else merged
         if format == "json":
             print(json.dumps(view, indent=2, default=str))
         else:
@@ -148,6 +157,18 @@ class Output:
         elif status in ("healthy", "ok"):
             lines.append("")
             lines.append("[OK] No issues detected")
+
+        # Errors section (from output.error() and any emitted errors key)
+        errors = data.get("errors", [])
+        if errors:
+            lines.append("")
+            lines.append("Errors:")
+            for err in errors:
+                if isinstance(err, dict):
+                    message = err.get("message", str(err))
+                    lines.append(f"  [ERROR] {message}")
+                else:
+                    lines.append(f"  [ERROR] {err}")
 
         # Warnings section
         warnings = data.get("warnings", [])

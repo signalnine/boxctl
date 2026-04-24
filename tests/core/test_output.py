@@ -110,3 +110,69 @@ class TestRenderNonFiniteFloats:
         assert "Ratio:" in out
         assert "inf" in out.lower()
         assert "Count:" in out
+
+
+class TestRenderSurfacesErrorsAndWarnings:
+    """render() must surface messages recorded via output.error()/warning().
+
+    Scripts commonly call ``output.error("kubectl not found")`` then
+    ``output.render()`` on failure paths where no data is emitted. Previously,
+    render() early-returned on empty self.data and silently dropped every
+    error/warning message.
+    """
+
+    def test_plain_render_shows_errors_without_data(self, capsys):
+        o = Output()
+        o.error("kubectl not found")
+        o.render(format="plain")
+        out = capsys.readouterr().out
+        assert "kubectl not found" in out
+
+    def test_plain_render_shows_warnings_without_data(self, capsys):
+        o = Output()
+        o.warning("disk degraded")
+        o.render(format="plain")
+        out = capsys.readouterr().out
+        assert "disk degraded" in out
+
+    def test_plain_render_shows_errors_with_data(self, capsys):
+        o = Output()
+        o.emit({"status": "ok"})
+        o.error("partial failure")
+        o.render(format="plain")
+        out = capsys.readouterr().out
+        assert "partial failure" in out
+
+    def test_json_render_includes_errors_without_data(self, capsys):
+        import json as _json
+        o = Output()
+        o.error("kubectl not found")
+        o.render(format="json")
+        out = capsys.readouterr().out
+        assert out.strip(), "expected JSON body, got empty output"
+        payload = _json.loads(out)
+        assert payload.get("errors") == ["kubectl not found"]
+
+    def test_json_render_includes_warnings_without_data(self, capsys):
+        import json as _json
+        o = Output()
+        o.warning("disk degraded")
+        o.render(format="json")
+        payload = _json.loads(capsys.readouterr().out)
+        assert payload.get("warnings") == ["disk degraded"]
+
+    def test_empty_render_still_returns_nothing(self, capsys):
+        """With no data, errors, or warnings, render() is a no-op."""
+        o = Output()
+        o.render(format="plain")
+        assert capsys.readouterr().out == ""
+
+    def test_emitted_errors_not_overwritten_by_recorded_errors(self, capsys):
+        """If data already has an 'errors' key, recorded self.errors merge after."""
+        o = Output()
+        o.emit({"status": "fail", "errors": ["emitted-err"]})
+        o.error("recorded-err")
+        o.render(format="plain")
+        out = capsys.readouterr().out
+        assert "emitted-err" in out
+        assert "recorded-err" in out
