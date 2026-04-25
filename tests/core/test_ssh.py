@@ -148,6 +148,16 @@ class TestResolveTargets:
         with pytest.raises(KeyError):
             resolve_targets(inv, "group:nope")
 
+    def test_dedupes_name_then_group(self, inventory_file):
+        inv = load_hosts(inventory_file)
+        r = resolve_targets(inv, "prod-1,group:web")
+        assert [h.name for h in r] == ["prod-1", "prod-2"]
+
+    def test_dedupes_repeated_name(self, inventory_file):
+        inv = load_hosts(inventory_file)
+        r = resolve_targets(inv, "prod-1,prod-1,prod-2")
+        assert [h.name for h in r] == ["prod-1", "prod-2"]
+
 
 class TestBuildSSHCmd:
     def test_basic(self):
@@ -220,6 +230,33 @@ class TestRunScriptRemote:
         assert res["exit_code"] == 2
         assert "ssh" in res["stderr"].lower()
 
+    def test_remote_env_prepended_as_python_preamble(self, tmp_path):
+        script = tmp_path / "s.py"
+        script.write_text("print('hi')\n")
+        h = HostConfig(name="a", host="h", user="u", port=22)
+        seen = {}
+
+        def runner(cmd, input, capture_output, text, timeout):
+            seen["cmd"] = cmd
+            seen["input"] = input
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+        run_script_remote(
+            script,
+            h,
+            args=[],
+            timeout=5,
+            runner=runner,
+            remote_env={"BOXCTL_NO_REDACT": "1"},
+        )
+        # Remote command stays 'python3 -' so the restricted shell still allows it.
+        assert "python3 -" in " ".join(seen["cmd"])
+        # Env lands inside the piped source as os.environ.setdefault.
+        assert "BOXCTL_NO_REDACT" in seen["input"]
+        assert "'1'" in seen["input"]
+        assert "environ.setdefault" in seen["input"]
+        assert "print('hi')" in seen["input"]
+
     def test_args_appended(self, tmp_path):
         script = tmp_path / "s.py"
         script.write_text("pass\n")
@@ -266,7 +303,7 @@ groups:
 """
         )
 
-        def fake_remote(script_path, host, args, timeout, runner=None):
+        def fake_remote(script_path, host, args, timeout, runner=None, **kwargs):
             return {
                 "host": host.name,
                 "exit_code": 0 if host.name == "p1" else 7,
@@ -304,7 +341,7 @@ groups:
         inv = tmp_path / "h.yml"
         inv.write_text("hosts: {p1: {host: 1.1.1.1, user: u}}\ngroups: {}\n")
 
-        def fake_remote(script_path, host, args, timeout, runner=None):
+        def fake_remote(script_path, host, args, timeout, runner=None, **kwargs):
             return {
                 "host": "p1",
                 "exit_code": 0,
@@ -341,7 +378,7 @@ groups:
         inv = tmp_path / "h.yml"
         inv.write_text("hosts: {p1: {host: h, user: u}}\ngroups: {}\n")
 
-        def fake_remote(script_path, host, args, timeout, runner=None):
+        def fake_remote(script_path, host, args, timeout, runner=None, **kwargs):
             return {
                 "host": "p1",
                 "exit_code": 2,
@@ -365,6 +402,79 @@ groups:
             ]
         )
         assert rc == 2
+
+    def test_no_redact_flag_propagates_to_remote(self, tmp_path, monkeypatch):
+        from boxctl.cli import main
+        from boxctl.core import ssh as ssh_mod
+
+        inv = tmp_path / "h.yml"
+        inv.write_text("hosts: {p1: {host: 1.1.1.1, user: u}}\ngroups: {}\n")
+        seen = {}
+
+        def fake_remote(script_path, host, args, timeout, runner=None, remote_env=None):
+            seen["remote_env"] = remote_env
+            return {
+                "host": host.name,
+                "exit_code": 0,
+                "stdout": "",
+                "stderr": "",
+                "timed_out": False,
+            }
+
+        monkeypatch.setattr(ssh_mod, "run_script_remote", fake_remote)
+        # Ensure no stale env var from other tests.
+        monkeypatch.delenv("BOXCTL_NO_REDACT", raising=False)
+        repo = Path(__file__).resolve().parents[2]
+        rc = main(
+            [
+                "--scripts-dir",
+                str(repo),
+                "--no-redact",
+                "run",
+                "loadavg_analyzer",
+                "--host",
+                "p1",
+                "--inventory",
+                str(inv),
+            ]
+        )
+        assert rc == 0
+        assert seen["remote_env"] == {"BOXCTL_NO_REDACT": "1"}
+
+    def test_redact_default_no_env_sent_to_remote(self, tmp_path, monkeypatch):
+        from boxctl.cli import main
+        from boxctl.core import ssh as ssh_mod
+
+        inv = tmp_path / "h.yml"
+        inv.write_text("hosts: {p1: {host: 1.1.1.1, user: u}}\ngroups: {}\n")
+        seen = {}
+
+        def fake_remote(script_path, host, args, timeout, runner=None, remote_env=None):
+            seen["remote_env"] = remote_env
+            return {
+                "host": host.name,
+                "exit_code": 0,
+                "stdout": "",
+                "stderr": "",
+                "timed_out": False,
+            }
+
+        monkeypatch.setattr(ssh_mod, "run_script_remote", fake_remote)
+        monkeypatch.delenv("BOXCTL_NO_REDACT", raising=False)
+        repo = Path(__file__).resolve().parents[2]
+        main(
+            [
+                "--scripts-dir",
+                str(repo),
+                "run",
+                "loadavg_analyzer",
+                "--host",
+                "p1",
+                "--inventory",
+                str(inv),
+            ]
+        )
+        assert seen["remote_env"] is None
 
     def test_unknown_selector_exits_2(self, tmp_path, monkeypatch, capsys):
         from boxctl.cli import main

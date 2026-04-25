@@ -198,14 +198,24 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     script = matches[0]
 
+    # Forward the global --format flag to the script unless the user already
+    # passed one. Scripts do their own rendering; without this the documented
+    # `boxctl --format json run X` call silently falls back to plain output.
+    script_args = list(args.args or [])
+    if args.format and not any(
+        a == "--format" or a.startswith("--format=") for a in script_args
+    ):
+        script_args += ["--format", args.format]
+
     if getattr(args, "host", None):
+        args.args = script_args
         return _run_remote(script, args)
 
     use_sudo = args.sudo or needs_privilege(script.path)
 
     result = run_script(
         script.path,
-        args=args.args,
+        args=script_args,
         timeout=args.timeout,
         use_sudo=use_sudo,
     )
@@ -495,9 +505,18 @@ def _run_remote(script, args: argparse.Namespace) -> int:
 
     worst = 0
     fmt = getattr(args, "format", "plain")
+    remote_env = (
+        {"BOXCTL_NO_REDACT": "1"}
+        if os.environ.get("BOXCTL_NO_REDACT") == "1"
+        else None
+    )
     for host in targets:
         res = run_script_remote(
-            script.path, host, args=args.args, timeout=args.timeout
+            script.path,
+            host,
+            args=args.args,
+            timeout=args.timeout,
+            remote_env=remote_env,
         )
         if fmt == "json":
             print(_json.dumps(res))
@@ -562,10 +581,15 @@ def cmd_source(args: argparse.Namespace) -> int:
 
         host = inv.hosts[args.target]
         try:
+            pubkey = pub_path.read_text()
+        except OSError as e:
+            print(f"Error: cannot read pubkey {pub_path}: {e}", file=sys.stderr)
+            return 2
+        try:
             result = prepare_host(
                 host,
                 username=args.username,
-                pubkey=pub_path.read_text(),
+                pubkey=pubkey,
                 admin_user=args.admin_user,
                 extra_allowed=args.allow or None,
                 timeout=args.timeout,

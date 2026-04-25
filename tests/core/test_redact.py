@@ -135,7 +135,11 @@ class TestRedactInOutput:
 
     def test_cli_no_redact_flag_sets_env(self, monkeypatch):
         from boxctl.cli import main
-        monkeypatch.delenv("BOXCTL_NO_REDACT", raising=False)
-        # No command -> prints help, returns 0; we only want the pre-command env wiring.
+        # setenv then delenv registers the var with monkeypatch so its
+        # teardown restores prior state (typically unset). Without this,
+        # main()'s direct os.environ write leaks into later subprocess-based
+        # tests and disables their redaction.
+        monkeypatch.setenv("BOXCTL_NO_REDACT", "sentinel")
+        monkeypatch.delenv("BOXCTL_NO_REDACT")
         main(["--no-redact"])
         assert os.environ.get("BOXCTL_NO_REDACT") == "1"

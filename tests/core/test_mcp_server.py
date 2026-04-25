@@ -124,6 +124,40 @@ class TestRunToolRedaction:
         result = run_script_tool(root, "leaky", timeout=10)
         assert "AKIAIOSFODNN7EXAMPLE" in result["stdout"]
 
+    def test_timeout_returns_exit_code_2(self, tmp_path, monkeypatch):
+        """Timed-out scripts should hand back exit_code=2 (CLI-compatible)."""
+        scripts_dir = tmp_path / "scripts" / "baremetal"
+        scripts_dir.mkdir(parents=True)
+        p = scripts_dir / "slow.py"
+        p.write_text(
+            "#!/usr/bin/env python3\n"
+            "# boxctl:\n"
+            "#   category: baremetal/test\n"
+            "#   tags: [test]\n"
+            "#   requires: []\n"
+            "#   privilege: user\n"
+            "#   related: []\n"
+            "#   brief: slow\n"
+            "pass\n"
+        )
+
+        import boxctl.core.mcp_server as mcp_mod
+        from boxctl.core.runner import ScriptResult
+
+        def fake_run_script(script_path, args=None, timeout=60, context=None, use_sudo=False):
+            return ScriptResult(
+                script_name=script_path.name,
+                returncode=None,
+                stdout="",
+                stderr="",
+                timed_out=True,
+            )
+
+        monkeypatch.setattr(mcp_mod, "run_script", fake_run_script)
+        res = run_script_tool(tmp_path, "slow", timeout=1)
+        assert res["exit_code"] == 2
+        assert res["timed_out"] is True
+
     def test_privileged_script_uses_sudo(self, tmp_path, monkeypatch):
         """A script with privilege: root routes through sudo in run_script."""
         scripts_dir = tmp_path / "scripts" / "baremetal"

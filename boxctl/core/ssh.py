@@ -56,9 +56,17 @@ def resolve_targets(inv: Inventory, selector: str) -> list[HostConfig]:
     """Resolve one or more host configs from a selector string.
 
     Accepts comma-separated names and ``group:<name>`` prefixes, e.g.
-    ``prod-1``, ``group:web``, or ``prod-1,group:web``.
+    ``prod-1``, ``group:web``, or ``prod-1,group:web``. Duplicates are
+    collapsed so ``p1,group:g`` (where g contains p1) visits p1 once.
     """
     out: list[HostConfig] = []
+    seen: set[str] = set()
+
+    def _add(host: HostConfig) -> None:
+        if host.name not in seen:
+            seen.add(host.name)
+            out.append(host)
+
     for part in [p.strip() for p in selector.split(",") if p.strip()]:
         if part.startswith("group:"):
             gname = part[len("group:") :]
@@ -67,11 +75,11 @@ def resolve_targets(inv: Inventory, selector: str) -> list[HostConfig]:
             for hname in inv.groups[gname]:
                 if hname not in inv.hosts:
                     raise KeyError(f"unknown host in group {gname}: {hname}")
-                out.append(inv.hosts[hname])
+                _add(inv.hosts[hname])
         else:
             if part not in inv.hosts:
                 raise KeyError(f"unknown host: {part}")
-            out.append(inv.hosts[part])
+            _add(inv.hosts[part])
     return out
 
 
@@ -101,10 +109,22 @@ def run_script_remote(
     args: list[str] | None = None,
     timeout: int = 60,
     runner: Runner | None = None,
+    remote_env: dict[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Execute a local script remotely by piping its source to ``python3 -``."""
+    """Execute a local script remotely by piping its source to ``python3 -``.
+
+    ``remote_env`` values are injected via a tiny Python preamble prepended
+    to the piped source (``os.environ.setdefault(...)``) rather than a shell
+    ``VAR=val`` prefix, so the remote command stays ``python3 -`` -- this is
+    what the boxctl-restricted-shell allowlist permits.
+    """
     args = args or []
     source = Path(script_path).read_text()
+    if remote_env:
+        preamble_lines = ["import os as _bxo"]
+        for k, v in remote_env.items():
+            preamble_lines.append(f"_bxo.environ.setdefault({k!r}, {v!r})")
+        source = "\n".join(preamble_lines) + "\n" + source
     quoted_args = " ".join(_shquote(a) for a in args)
     remote_cmd = f"python3 - {quoted_args}" if quoted_args else "python3 -"
     cmd = build_ssh_cmd(host, remote_cmd)

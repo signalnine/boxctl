@@ -211,6 +211,43 @@ groups: {}
         )
         assert rc == 2
 
+    def test_source_prepare_unreadable_pubkey_exits_2(self, tmp_path, capsys):
+        """An existing-but-unreadable pubkey should exit 2, not traceback."""
+        import os
+        import stat
+
+        from boxctl.cli import main
+
+        pub = tmp_path / "k.pub"
+        pub.write_text("ssh-ed25519 AAAA user@x\n")
+        os.chmod(pub, 0)  # unreadable
+
+        inv = tmp_path / "h.yml"
+        inv.write_text(
+            """
+hosts:
+  p1: {host: 10.0.0.1, user: admin}
+groups: {}
+"""
+        )
+        try:
+            rc = main(
+                [
+                    "source",
+                    "prepare",
+                    "p1",
+                    "--pubkey",
+                    str(pub),
+                    "--inventory",
+                    str(inv),
+                ]
+            )
+        finally:
+            os.chmod(pub, stat.S_IRUSR | stat.S_IWUSR)
+        assert rc == 2
+        err = capsys.readouterr().err
+        assert "cannot read pubkey" in err or "Permission denied" in err
+
     def test_source_prepare_unknown_host(self, tmp_path):
         from boxctl.cli import main
         pub = tmp_path / "k.pub"

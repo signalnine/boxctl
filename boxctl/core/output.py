@@ -45,14 +45,29 @@ class Output:
             return f"Warning: {self.warnings[0]}"
         return "ok"
 
-    def to_json(self) -> str:
-        """Return data as JSON string."""
-        return json.dumps(self.data, indent=2, default=str)
+    def to_json(self, redact: bool = True) -> str:
+        """Return data as JSON string.
 
-    def to_plain(self) -> str:
-        """Return data as plain text."""
+        Redacts by default; pass ``redact=False`` for raw output. Matches
+        ``render()`` so callers cannot accidentally bypass scrubbing.
+        ``BOXCTL_NO_REDACT=1`` in the environment also disables redaction.
+        """
+        if os.environ.get("BOXCTL_NO_REDACT") == "1":
+            redact = False
+        view = redact_value(self.data) if redact else self.data
+        return json.dumps(view, indent=2, default=str)
+
+    def to_plain(self, redact: bool = True) -> str:
+        """Return data as plain text.
+
+        Redacts by default; pass ``redact=False`` for raw output.
+        ``BOXCTL_NO_REDACT=1`` in the environment also disables redaction.
+        """
+        if os.environ.get("BOXCTL_NO_REDACT") == "1":
+            redact = False
+        source = redact_value(self.data) if redact else self.data
         lines = []
-        for key, value in self.data.items():
+        for key, value in source.items():
             if isinstance(value, list):
                 lines.append(f"{key}:")
                 for item in value:

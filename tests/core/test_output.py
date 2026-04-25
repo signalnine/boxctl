@@ -70,6 +70,59 @@ class TestOutput:
         assert output.data["key2"] == "value2"
 
 
+class TestToJsonRedaction:
+    """to_json() must scrub secrets by default (matches render())."""
+
+    def test_default_redacts_aws_key(self):
+        o = Output()
+        o.emit({"key": "AKIAIOSFODNN7EXAMPLE"})
+        result = json.loads(o.to_json())
+        assert result["key"] == "[REDACTED:aws-key]"
+
+    def test_redacts_db_cred(self):
+        o = Output()
+        o.emit({"url": "postgres://user:pw@db/foo"})
+        result = json.loads(o.to_json())
+        assert "pw" not in result["url"]
+        assert "[REDACTED:db-cred]" in result["url"]
+
+    def test_opt_out_preserves_raw(self):
+        o = Output()
+        o.emit({"key": "AKIAIOSFODNN7EXAMPLE"})
+        result = json.loads(o.to_json(redact=False))
+        assert result["key"] == "AKIAIOSFODNN7EXAMPLE"
+
+    def test_env_var_disables_redaction(self, monkeypatch):
+        monkeypatch.setenv("BOXCTL_NO_REDACT", "1")
+        o = Output()
+        o.emit({"key": "AKIAIOSFODNN7EXAMPLE"})
+        result = json.loads(o.to_json())
+        assert result["key"] == "AKIAIOSFODNN7EXAMPLE"
+
+    def test_data_not_mutated(self):
+        o = Output()
+        o.emit({"key": "AKIAIOSFODNN7EXAMPLE"})
+        o.to_json()
+        assert o.data["key"] == "AKIAIOSFODNN7EXAMPLE"
+
+
+class TestToPlainRedaction:
+    """to_plain() must scrub secrets by default."""
+
+    def test_default_redacts(self):
+        o = Output()
+        o.emit({"token": "sk-abcdefghijklmnopqrstuvwxyz0123"})
+        result = o.to_plain()
+        assert "sk-abcdefghij" not in result
+        assert "[REDACTED:api-key]" in result
+
+    def test_opt_out_preserves_raw(self):
+        o = Output()
+        o.emit({"token": "sk-abcdefghijklmnopqrstuvwxyz0123"})
+        result = o.to_plain(redact=False)
+        assert "sk-abcdefghijklmnopqrstuvwxyz0123" in result
+
+
 class TestRenderNonFiniteFloats:
     """render() must not crash when scripts emit NaN/Inf floats.
 
