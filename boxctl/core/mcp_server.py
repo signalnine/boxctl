@@ -10,9 +10,11 @@ direct calls and MCP tool dispatch.
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Any
 
+import asyncio
 import os
 
 from boxctl.core import needs_privilege
@@ -113,8 +115,10 @@ def run_script_tool(
         redact = False
     stdout = redact_value(result.stdout) if redact else result.stdout
     stderr = redact_value(result.stderr) if redact else result.stderr
+    # Timeout maps to exit 2 so agents see the same sentinel the CLI emits.
+    exit_code = result.returncode if result.returncode is not None else 2
     return {
-        "exit_code": result.returncode if result.returncode is not None else -1,
+        "exit_code": exit_code,
         "stdout": stdout,
         "stderr": stderr,
         "timed_out": result.timed_out,
@@ -157,7 +161,129 @@ def create_server(scripts_dir: Path):
     return server
 
 
+@asynccontextmanager
+async def _stdio_transport():
+    """Asyncio stdio transport that avoids AnyIO's thread-backed file wrapper."""
+    import anyio
+    import mcp.types as types
+    from mcp.shared.message import SessionMessage
+
+    read_writer, read_stream = anyio.create_memory_object_stream(0)
+    write_stream, write_reader = anyio.create_memory_object_stream(0)
+
+    loop = asyncio.get_running_loop()
+    stdin_fd = 0
+    stdout_fd = 1
+    stdin_was_blocking = os.get_blocking(stdin_fd)
+    buffer = bytearray()
+    inbound: asyncio.Queue[Any] = asyncio.Queue()
+    eof = object()
+    reader_active = True
+
+    def _send_line(line: bytes) -> None:
+        try:
+            text = line.decode("utf-8")
+            message = types.JSONRPCMessage.model_validate_json(text)
+        except Exception as exc:  # pragma: no cover - malformed client input
+            inbound.put_nowait(exc)
+        else:
+            inbound.put_nowait(SessionMessage(message))
+
+    def _close_reader() -> None:
+        nonlocal reader_active
+        if not reader_active:
+            return
+        reader_active = False
+        with suppress(Exception):
+            loop.remove_reader(stdin_fd)
+        if buffer:
+            _send_line(bytes(buffer))
+            buffer.clear()
+        inbound.put_nowait(eof)
+
+    def _read_ready() -> None:
+        while True:
+            try:
+                chunk = os.read(stdin_fd, 65536)
+            except BlockingIOError:
+                return
+            except OSError as exc:
+                inbound.put_nowait(exc)
+                _close_reader()
+                return
+
+            if not chunk:
+                _close_reader()
+                return
+
+            buffer.extend(chunk)
+            while True:
+                try:
+                    newline = buffer.index(10)
+                except ValueError:
+                    break
+                line = bytes(buffer[:newline]).removesuffix(b"\r")
+                del buffer[: newline + 1]
+                _send_line(line)
+
+    async def _stdin_forwarder() -> None:
+        async with read_writer:
+            while True:
+                item = await inbound.get()
+                if item is eof:
+                    return
+                await read_writer.send(item)
+
+    async def _write_all(data: bytes) -> None:
+        view = memoryview(data)
+        while view:
+            try:
+                written = os.write(stdout_fd, view)
+            except BlockingIOError:  # pragma: no cover - pipe backpressure
+                await asyncio.sleep(0.01)
+                continue
+            view = view[written:]
+
+    async def _stdout_writer() -> None:
+        async with write_reader:
+            async for session_message in write_reader:
+                payload = session_message.message.model_dump_json(
+                    by_alias=True,
+                    exclude_none=True,
+                )
+                await _write_all((payload + "\n").encode("utf-8"))
+
+    os.set_blocking(stdin_fd, False)
+    loop.add_reader(stdin_fd, _read_ready)
+    reader_task = loop.create_task(_stdin_forwarder())
+    writer_task = loop.create_task(_stdout_writer())
+
+    try:
+        yield read_stream, write_stream
+    finally:
+        _close_reader()
+        await write_stream.aclose()
+        reader_task.cancel()
+        writer_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await reader_task
+        with suppress(asyncio.CancelledError):
+            await writer_task
+        os.set_blocking(stdin_fd, stdin_was_blocking)
+
+
 def serve_stdio(scripts_dir: Path) -> None:
     """Run the MCP server on stdio until the client disconnects."""
+    import anyio
+
     server = create_server(scripts_dir)
-    server.run("stdio")
+
+    async def _run() -> None:
+        async with _stdio_transport() as (read_stream, write_stream):
+            await server._mcp_server.run(
+                read_stream,
+                write_stream,
+                server._mcp_server.create_initialization_options(),
+            )
+
+    anyio.run(_run)
