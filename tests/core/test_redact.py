@@ -45,6 +45,57 @@ class TestRedactAPIKey:
         assert redact_value("token=sk-abcdefghijklmnopqrstuv end") == "token=[REDACTED:api-key] end"
 
 
+class TestRedactGitHubToken:
+    def test_classic_pat(self):
+        assert redact_value("ghp_abc123def456ghi789jkl012mno345pqr678") == "[REDACTED:github-token]"
+
+    def test_oauth_token(self):
+        assert redact_value("gho_abc123def456ghi789jkl012mno345pqr678") == "[REDACTED:github-token]"
+
+    def test_server_token(self):
+        assert redact_value("ghs_abc123def456ghi789jkl012mno345pqr678") == "[REDACTED:github-token]"
+
+    def test_refresh_token(self):
+        assert redact_value("ghr_abc123def456ghi789jkl012mno345pqr678") == "[REDACTED:github-token]"
+
+    def test_fine_grained_pat(self):
+        assert redact_value("github_pat_11ABCDEFG0abcdefghij_lmnopqrstuvwxyz0123456789ABCDEFG") == "[REDACTED:github-token]"
+
+    def test_pat_embedded(self):
+        assert redact_value("token=ghp_abc123def456ghi789jkl012mno345pqr678 end") == "token=[REDACTED:github-token] end"
+
+
+class TestRedactSlackToken:
+    def test_xoxb_bot_token(self):
+        assert redact_value("xoxb-12345-abcdef-secret") == "[REDACTED:slack-token]"
+
+    def test_xoxa_app_token(self):
+        assert redact_value("xoxa-12345-abcdef") == "[REDACTED:slack-token]"
+
+    def test_xoxp_user_token(self):
+        assert redact_value("xoxp-12345-67890-abcdef") == "[REDACTED:slack-token]"
+
+    def test_xoxr_refresh_token(self):
+        assert redact_value("xoxr-12345-abcdef") == "[REDACTED:slack-token]"
+
+    def test_xoxs_token(self):
+        assert redact_value("xoxs-12345-abcdef") == "[REDACTED:slack-token]"
+
+    def test_slack_embedded(self):
+        assert redact_value("slack=xoxb-1-2-secret done") == "slack=[REDACTED:slack-token] done"
+
+
+class TestRedactBearer:
+    def test_bearer_opaque_token(self):
+        assert redact_value("Authorization: Bearer abc123def456opaque") == "Authorization: Bearer [REDACTED:bearer-token]"
+
+    def test_bearer_lowercase_header(self):
+        assert redact_value("authorization: bearer xyz789abc") == "authorization: bearer [REDACTED:bearer-token]"
+
+    def test_bearer_only(self):
+        assert redact_value("Bearer abc123def456") == "Bearer [REDACTED:bearer-token]"
+
+
 class TestRedactDBCreds:
     def test_postgres(self):
         assert redact_value("postgres://alice:hunter2@db.local/app") == "postgres://[REDACTED:db-cred]@db.local/app"

@@ -27,6 +27,19 @@ _PATTERNS: list[tuple[re.Pattern[str], str]] = [
     ),
     (re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"), "[REDACTED:aws-key]"),
     (re.compile(r"\bsk-[A-Za-z0-9_-]{20,}"), "[REDACTED:api-key]"),
+    (
+        re.compile(r"\b(?:ghp|gho|ghs|ghr)_[A-Za-z0-9]{20,}\b"),
+        "[REDACTED:github-token]",
+    ),
+    (
+        re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b"),
+        "[REDACTED:github-token]",
+    ),
+    (re.compile(r"\bxox[abprs]-[A-Za-z0-9-]+\b"), "[REDACTED:slack-token]"),
+    (
+        re.compile(r"(?i)\b(Bearer)\s+[A-Za-z0-9._~+/=-]+"),
+        r"\1 [REDACTED:bearer-token]",
+    ),
 ]
 
 _DB_CRED = re.compile(
