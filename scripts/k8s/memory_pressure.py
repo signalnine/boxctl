@@ -328,6 +328,7 @@ def run(args: list[str], output: Output, context: Context) -> int:
     # Check for kubectl
     if not context.check_tool("kubectl"):
         output.error("kubectl not found in PATH")
+        output.render(opts.format)
         return 2
 
     exit_code = 0
@@ -348,10 +349,12 @@ def run(args: list[str], output: Output, context: Context) -> int:
             result = context.run(["kubectl", "get", "nodes", "-o", "json"])
             if result.returncode != 0:
                 output.error(f"kubectl failed: {result.stderr}")
+                output.render(opts.format)
                 return 2
             nodes_data = json.loads(result.stdout)
         except Exception as e:
             output.error(f"Failed to get nodes: {e}")
+            output.render(opts.format)
             return 2
 
         nodes_with_pressure, nodes_summary = check_node_memory_pressure(nodes_data)
@@ -370,10 +373,12 @@ def run(args: list[str], output: Output, context: Context) -> int:
             result = context.run(cmd)
             if result.returncode != 0:
                 output.error(f"kubectl failed: {result.stderr}")
+                output.render(opts.format)
                 return 2
             pods_data = json.loads(result.stdout)
         except Exception as e:
             output.error(f"Failed to get pods: {e}")
+            output.render(opts.format)
             return 2
 
         high_memory_pods, memory_stats = check_pod_memory_usage(pods_data)

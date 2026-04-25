@@ -167,24 +167,51 @@ print(" ".join(sys.argv[1:]))
 class TestSudoPath:
     """Exercises the sudo branch of run_script via the MockContext."""
 
-    def test_sudo_prepends_sudo(self, mock_context, monkeypatch):
-        monkeypatch.delenv("PYTHONPATH", raising=False)
-        ctx = mock_context(
-            tools_available=["python3", "sudo"],
-            command_outputs={("sudo", "python3", "/p/s.py"): "ok"},
-        )
-        run_script(Path("/p/s.py"), use_sudo=True, context=ctx)
-        assert ["sudo", "python3", "/p/s.py"] in ctx.commands_run
+    def _boxctl_root(self) -> str:
+        import boxctl
 
-    def test_sudo_with_pythonpath_passes_as_env_assignment(self, mock_context, monkeypatch):
-        monkeypatch.setenv("PYTHONPATH", "/some/where:/lib")
+        return str(Path(boxctl.__file__).resolve().parent.parent)
+
+    def test_sudo_injects_boxctl_root_when_pythonpath_empty(self, mock_context, monkeypatch):
+        """``pip install -e --user`` puts boxctl in user site-packages via .pth
+        files; sudo's python3 doesn't see those, so the runner must always
+        forward the import root."""
+        monkeypatch.delenv("PYTHONPATH", raising=False)
+        boxctl_root = self._boxctl_root()
         ctx = mock_context(
             tools_available=["python3", "sudo"],
             command_outputs={
-                ("sudo", "PYTHONPATH=/some/where:/lib", "python3", "/p/s.py"): "ok",
+                ("sudo", f"PYTHONPATH={boxctl_root}", "python3", "/p/s.py"): "ok",
             },
         )
         run_script(Path("/p/s.py"), use_sudo=True, context=ctx)
-        # Each element is a separate argv token -- no shell eval of the path.
         last = ctx.commands_run[-1]
-        assert last[:4] == ["sudo", "PYTHONPATH=/some/where:/lib", "python3", "/p/s.py"]
+        assert last[0] == "sudo"
+        assert last[1] == f"PYTHONPATH={boxctl_root}"
+        assert last[2:] == ["python3", "/p/s.py"]
+
+    def test_sudo_prepends_boxctl_root_to_existing_pythonpath(self, mock_context, monkeypatch):
+        monkeypatch.setenv("PYTHONPATH", "/some/where:/lib")
+        boxctl_root = self._boxctl_root()
+        expected = f"PYTHONPATH={boxctl_root}:/some/where:/lib"
+        ctx = mock_context(
+            tools_available=["python3", "sudo"],
+            command_outputs={("sudo", expected, "python3", "/p/s.py"): "ok"},
+        )
+        run_script(Path("/p/s.py"), use_sudo=True, context=ctx)
+        last = ctx.commands_run[-1]
+        assert last[:4] == ["sudo", expected, "python3", "/p/s.py"]
+
+    def test_sudo_does_not_duplicate_boxctl_root(self, mock_context, monkeypatch):
+        boxctl_root = self._boxctl_root()
+        monkeypatch.setenv("PYTHONPATH", f"{boxctl_root}:/lib")
+        ctx = mock_context(
+            tools_available=["python3", "sudo"],
+            command_outputs={
+                ("sudo", f"PYTHONPATH={boxctl_root}:/lib", "python3", "/p/s.py"): "ok",
+            },
+        )
+        run_script(Path("/p/s.py"), use_sudo=True, context=ctx)
+        last = ctx.commands_run[-1]
+        # Count occurrences -- boxctl_root must appear exactly once.
+        assert last[1].count(boxctl_root) == 1

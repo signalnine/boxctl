@@ -65,23 +65,28 @@ class TestRunScriptWithPrivilege:
 
     def test_uses_sudo_for_privileged_script(self, mock_context, tmp_path, monkeypatch):
         """Uses sudo when script requires root privilege."""
+        import boxctl
+
         script_file = tmp_path / "priv.py"
         script_file.write_text(PRIVILEGED_SCRIPT)
 
-        # Set PYTHONPATH to match test expectation
+        # Runner always prepends boxctl's import root so sudo's python can
+        # find the package (user-level editable installs are invisible to root).
+        boxctl_root = str(Path(boxctl.__file__).resolve().parent.parent)
         monkeypatch.setenv("PYTHONPATH", ".")
+        expected_pp = f"PYTHONPATH={boxctl_root}:."
 
         ctx = mock_context(
             tools_available=["sudo", "python3"],
             command_outputs={
-                ("sudo", "PYTHONPATH=.", "python3", str(script_file)): "running as root\n",
+                ("sudo", expected_pp, "python3", str(script_file)): "running as root\n",
             }
         )
 
         result = run_script(script_file, context=ctx, use_sudo=True)
 
         assert result.success is True
-        assert ["sudo", "PYTHONPATH=.", "python3", str(script_file)] in ctx.commands_run
+        assert ["sudo", expected_pp, "python3", str(script_file)] in ctx.commands_run
 
     def test_no_sudo_when_not_needed(self, mock_context, tmp_path):
         """Does not use sudo when script doesn't need privilege."""
@@ -102,16 +107,19 @@ class TestRunScriptWithPrivilege:
 
     def test_sudo_with_arguments(self, mock_context, tmp_path, monkeypatch):
         """Passes arguments through sudo."""
+        import boxctl
+
         script_file = tmp_path / "priv.py"
         script_file.write_text(PRIVILEGED_SCRIPT)
 
-        # Set PYTHONPATH to match test expectation
+        boxctl_root = str(Path(boxctl.__file__).resolve().parent.parent)
         monkeypatch.setenv("PYTHONPATH", ".")
+        expected_pp = f"PYTHONPATH={boxctl_root}:."
 
         ctx = mock_context(
             tools_available=["sudo", "python3"],
             command_outputs={
-                ("sudo", "PYTHONPATH=.", "python3", str(script_file), "--arg", "value"): "output\n",
+                ("sudo", expected_pp, "python3", str(script_file), "--arg", "value"): "output\n",
             }
         )
 
@@ -123,4 +131,4 @@ class TestRunScriptWithPrivilege:
         )
 
         assert result.success is True
-        assert ["sudo", "PYTHONPATH=.", "python3", str(script_file), "--arg", "value"] in ctx.commands_run
+        assert ["sudo", expected_pp, "python3", str(script_file), "--arg", "value"] in ctx.commands_run

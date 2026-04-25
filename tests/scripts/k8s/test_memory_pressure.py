@@ -233,7 +233,7 @@ class TestMemoryPressure:
         assert data["pods"]["total"] == 1
 
     def test_kubectl_not_found(self, capsys):
-        """Missing kubectl returns exit code 2."""
+        """Missing kubectl returns exit code 2 and surfaces the error."""
         from scripts.k8s.memory_pressure import run
 
         context = MockContext(
@@ -245,6 +245,38 @@ class TestMemoryPressure:
         result = run([], output, context)
 
         assert result == 2
+        captured = capsys.readouterr()
+        # Recorded errors must reach the user; previously they were silently
+        # dropped because the script never called output.render() on the
+        # early-return paths.
+        assert "kubectl not found" in captured.out
+
+    def test_kubectl_failure_surfaces_stderr(self, capsys):
+        """When kubectl exits non-zero (e.g. missing kubeconfig), the stderr
+        must reach the user instead of an empty stdout + bare rc=2."""
+        import subprocess as _sp
+
+        from scripts.k8s.memory_pressure import run
+
+        context = MockContext(
+            tools_available=["kubectl"],
+            command_outputs={
+                ("kubectl", "get", "nodes", "-o", "json"): _sp.CompletedProcess(
+                    args=["kubectl", "get", "nodes", "-o", "json"],
+                    returncode=1,
+                    stdout="",
+                    stderr="Unable to connect to the server: cert error",
+                ),
+            },
+        )
+        output = Output()
+
+        result = run([], output, context)
+
+        assert result == 2
+        captured = capsys.readouterr()
+        assert "kubectl failed" in captured.out
+        assert "cert error" in captured.out
 
     def test_high_memory_pods_sorted(self, capsys):
         """High memory pods are sorted by usage."""
