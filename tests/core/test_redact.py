@@ -141,6 +141,26 @@ class TestRedactRecursive:
     def test_tuple(self):
         assert redact_value(("AKIAIOSFODNN7EXAMPLE", 1)) == ("[REDACTED:aws-key]", 1)
 
+    def test_dict_keys_redacted_aws_github_jwt(self):
+        jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NSJ9.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+        d = {
+            "AKIAIOSFODNN7EXAMPLE": "aws value",
+            "ghp_abc123def456ghi789jkl012mno345pqr678": "gh value",
+            jwt: "jwt value",
+        }
+        r = redact_value(d)
+        assert "[REDACTED:aws-key]" in r
+        assert "[REDACTED:github-token]" in r
+        assert "[REDACTED:jwt]" in r
+        assert "AKIAIOSFODNN7EXAMPLE" not in r
+        assert "ghp_abc123def456ghi789jkl012mno345pqr678" not in r
+        assert jwt not in r
+
+    def test_dict_non_string_keys_passthrough(self):
+        d = {1: "v", (2, 3): "w", None: "x"}
+        r = redact_value(d)
+        assert r == {1: "v", (2, 3): "w", None: "x"}
+
 
 class TestRedactInOutput:
     def test_render_json_redacts(self, capsys):

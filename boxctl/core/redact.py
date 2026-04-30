@@ -59,7 +59,10 @@ def redact_value(value: Any) -> Any:
     if isinstance(value, str):
         return _redact_str(value)
     if isinstance(value, dict):
-        return {k: redact_value(v) for k, v in value.items()}
+        return {
+            (_redact_str(k) if isinstance(k, str) else k): redact_value(v)
+            for k, v in value.items()
+        }
     if isinstance(value, list):
         return [redact_value(v) for v in value]
     if isinstance(value, tuple):
