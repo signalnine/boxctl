@@ -189,6 +189,32 @@ def create_parser() -> argparse.ArgumentParser:
         help="Skip extracting file content from the container",
     )
 
+    # daemon command (issue boxctl-n2m.8)
+    daemon_parser = subparsers.add_parser(
+        "daemon",
+        help="Run the boxctl HTTP control plane (multi-host orchestration)",
+    )
+    daemon_sub = daemon_parser.add_subparsers(
+        dest="daemon_command", help="daemon subcommand"
+    )
+    serve_parser = daemon_sub.add_parser(
+        "serve", help="Start the REST API server"
+    )
+    serve_parser.add_argument(
+        "--bind", default="127.0.0.1", help="Bind address (default: 127.0.0.1)"
+    )
+    serve_parser.add_argument(
+        "--port", type=int, default=8765, help="Port (default: 8765, 0 for ephemeral)"
+    )
+    serve_parser.add_argument(
+        "--config",
+        help="Path to daemon token/role config (default: ~/.config/boxctl/daemon.yml)",
+    )
+    serve_parser.add_argument(
+        "--inventory",
+        help="Path to hosts inventory YAML (default: ~/.config/boxctl/hosts.yml)",
+    )
+
     # apply command (issue boxctl-n2m.7)
     apply_parser = subparsers.add_parser(
         "apply",
@@ -856,6 +882,60 @@ def cmd_sandbox(args: argparse.Namespace) -> int:
     return 2
 
 
+def cmd_daemon(args: argparse.Namespace) -> int:
+    """Run the boxctl HTTP control plane (issue boxctl-n2m.8)."""
+    from boxctl.core import approval as approval_mod
+    from boxctl.core import daemon as daemon_mod
+    from boxctl.core import sandbox as sandbox_mod
+    from boxctl.core.ssh import DEFAULT_INVENTORY
+
+    sub = getattr(args, "daemon_command", None)
+    if sub != "serve":
+        print("Usage: boxctl daemon serve ...", file=sys.stderr)
+        return 2
+
+    cfg_path = Path(args.config) if args.config else daemon_mod.default_config_path()
+    try:
+        cfg = daemon_mod.load_daemon_config(cfg_path)
+    except ValueError as e:
+        print(f"Error: invalid daemon config: {e}", file=sys.stderr)
+        return 2
+
+    inventory_path = Path(args.inventory) if args.inventory else DEFAULT_INVENTORY
+    approvals_path = approval_mod.default_audit_log_path()
+    runs_path = daemon_mod.default_runs_log_path()
+    access_path = daemon_mod.default_access_log_path()
+
+    def real_spawn(name: str, image: str, source_host: str | None):
+        sb = sandbox_mod.create_sandbox(
+            name, image=image, source_host=source_host
+        )
+        return sb.to_dict()
+
+    state = daemon_mod.DaemonState(
+        config=cfg,
+        inventory_path=inventory_path,
+        approvals_log_path=approvals_path,
+        runs_log_path=runs_path,
+        access_log_path=access_path,
+        sandbox_spawn=real_spawn,
+    )
+
+    server = daemon_mod.start_server(state, host=args.bind, port=args.port)
+    daemon_mod._LAST_SERVER = server
+    addr = server.server_address
+    print(f"boxctl daemon listening on http://{addr[0]}:{addr[1]}")
+    try:
+        daemon_mod._wait_for_shutdown(server)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.shutdown()
+        server.server_close()
+        daemon_mod._LAST_SERVER = None
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Main entry point."""
     parser = create_parser()
@@ -880,6 +960,7 @@ def main(argv: list[str] | None = None) -> int:
         "source": cmd_source,
         "sandbox": cmd_sandbox,
         "apply": cmd_apply,
+        "daemon": cmd_daemon,
     }
 
     return commands[args.command](args)
