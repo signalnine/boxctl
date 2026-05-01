@@ -189,6 +189,32 @@ def create_parser() -> argparse.ArgumentParser:
         help="Skip extracting file content from the container",
     )
 
+    # apply command (issue boxctl-n2m.7)
+    apply_parser = subparsers.add_parser(
+        "apply",
+        help="Review a generated playbook, prompt for approval, log the decision",
+    )
+    apply_parser.add_argument("playbook", help="Path to the playbook YAML file")
+    apply_parser.add_argument(
+        "-y", "--yes",
+        action="store_true",
+        help="Approve without prompting (decision still logged)",
+    )
+    apply_parser.add_argument(
+        "--no-color",
+        action="store_true",
+        help="Disable colored diff output (also honored: NO_COLOR, BOXCTL_NO_COLOR)",
+    )
+    apply_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show diff and exit without prompting or logging",
+    )
+    apply_parser.add_argument(
+        "--audit-log",
+        help="Path to audit log file (default: $BOXCTL_AUDIT_LOG or ~/.local/state/boxctl/audit.jsonl)",
+    )
+
     # request command
     request_parser = subparsers.add_parser(
         "request",
@@ -652,6 +678,54 @@ def cmd_source(args: argparse.Namespace) -> int:
     return 2
 
 
+def cmd_apply(args: argparse.Namespace) -> int:
+    """Review a playbook, prompt for approval, log the decision (issue boxctl-n2m.7)."""
+    from boxctl.core import approval
+
+    pb_path = Path(args.playbook)
+    if not pb_path.exists():
+        print(f"Error: playbook not found: {pb_path}", file=sys.stderr)
+        return 2
+
+    try:
+        playbook_text = pb_path.read_text()
+    except OSError as e:
+        print(f"Error: cannot read playbook {pb_path}: {e}", file=sys.stderr)
+        return 2
+
+    summary = approval.summarize_playbook(playbook_text)
+
+    use_color = (
+        not args.no_color
+        and approval.should_use_color(is_tty=sys.stdout.isatty())
+    )
+
+    print(approval.render_summary(summary, color=use_color))
+    print()
+    print("--- playbook ---")
+    print(playbook_text, end="" if playbook_text.endswith("\n") else "\n")
+    print("--- end ---")
+
+    if args.dry_run:
+        return 0
+
+    if args.yes:
+        decision = "approved"
+    else:
+        print("Apply this playbook? [y/N]: ", end="", flush=True)
+        decision = "approved" if approval.prompt_approval() else "rejected"
+
+    log_path = Path(args.audit_log) if args.audit_log else None
+    written = approval.log_decision(
+        playbook_path=str(pb_path),
+        decision=decision,
+        summary=summary,
+        log_path=log_path,
+    )
+    print(f"Decision: {decision} (logged to {written})")
+    return 0 if decision == "approved" else 1
+
+
 def cmd_mcp(args: argparse.Namespace) -> int:
     """Run boxctl as an MCP server on stdio."""
     from boxctl.core.mcp_server import serve_stdio
@@ -805,6 +879,7 @@ def main(argv: list[str] | None = None) -> int:
         "mcp": cmd_mcp,
         "source": cmd_source,
         "sandbox": cmd_sandbox,
+        "apply": cmd_apply,
     }
 
     return commands[args.command](args)
