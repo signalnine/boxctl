@@ -174,6 +174,21 @@ def create_parser() -> argparse.ArgumentParser:
     )
     sb_destroy.add_argument("name", help="Sandbox name")
 
+    sb_playbook = sandbox_sub.add_parser(
+        "playbook",
+        help="Generate an Ansible playbook from the sandbox diff",
+    )
+    sb_playbook.add_argument("name", help="Sandbox name")
+    sb_playbook.add_argument(
+        "-o", "--output",
+        help="Write playbook to file instead of stdout",
+    )
+    sb_playbook.add_argument(
+        "--no-content",
+        action="store_true",
+        help="Skip extracting file content from the container",
+    )
+
     # request command
     request_parser = subparsers.add_parser(
         "request",
@@ -740,6 +755,27 @@ def cmd_sandbox(args: argparse.Namespace) -> int:
             return 2
         if args.format != "json":
             print(f"Destroyed sandbox {args.name}")
+        return 0
+
+    if sub == "playbook":
+        from boxctl.core import ansible as ans
+
+        try:
+            result = sb.diff_sandbox(args.name, runner=runner)
+        except FileNotFoundError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 2
+
+        cid = None if args.no_content else result.get("container_id")
+        playbook = ans.generate_playbook(result, container_id=cid, runner=runner)
+
+        if args.output:
+            with open(args.output, "w") as f:
+                f.write(playbook)
+            if args.format != "json":
+                print(f"Wrote playbook to {args.output}")
+        else:
+            print(playbook, end="")
         return 0
 
     print(f"Unknown sandbox subcommand: {sub}", file=sys.stderr)

@@ -37,6 +37,7 @@ class Sandbox:
     source_host: str | None
     created_at: float
     units_snapshot: list[str] = field(default_factory=list)
+    packages_snapshot: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -50,6 +51,7 @@ class Sandbox:
             source_host=d.get("source_host"),
             created_at=float(d["created_at"]),
             units_snapshot=list(d.get("units_snapshot") or []),
+            packages_snapshot=list(d.get("packages_snapshot") or []),
         )
 
 
@@ -120,6 +122,33 @@ def snapshot_units(host: str | None = None, runner: Runner | None = None) -> lis
     return _parse_units(result.stdout)
 
 
+def _parse_packages(stdout: str) -> list[str]:
+    out: set[str] = set()
+    for line in stdout.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        out.add(line.split()[0])
+    return sorted(out)
+
+
+def snapshot_packages(host: str | None = None, runner: Runner | None = None) -> list[str]:
+    """Return sorted list of installed dpkg package names from the local host.
+
+    `host` is reserved for future remote support, mirroring snapshot_units.
+    Returns [] if dpkg-query is unavailable or fails (non-Debian hosts).
+    """
+    run = runner or _default_runner
+    cmd = ["dpkg-query", "-W", "-f=${Package}\n"]
+    try:
+        result = run(cmd, capture_output=True, text=True)
+    except FileNotFoundError:
+        return []
+    if result.returncode != 0:
+        return []
+    return _parse_packages(result.stdout)
+
+
 def _validate_name(name: str) -> str:
     if not _NAME_RE.match(name or ""):
         raise ValueError(
@@ -152,6 +181,7 @@ def create_sandbox(
         raise RuntimeError("podman run produced no container id")
 
     units = snapshot_units(host=source_host, runner=runner)
+    packages = snapshot_packages(host=source_host, runner=runner)
 
     sandbox = Sandbox(
         name=name,
@@ -160,6 +190,7 @@ def create_sandbox(
         source_host=source_host,
         created_at=time.time(),
         units_snapshot=units,
+        packages_snapshot=packages,
     )
 
     sf.parent.mkdir(parents=True, exist_ok=True)
@@ -236,11 +267,32 @@ def diff_sandbox(name: str, runner: Runner | None = None) -> dict[str, Any]:
     units_after = _parse_units(units_after_result.stdout or "")
     unit_changes = _diff_units(sandbox.units_snapshot, units_after)
 
+    packages_after_result = run(
+        [
+            "podman",
+            "exec",
+            sandbox.container_id,
+            "dpkg-query",
+            "-W",
+            "-f=${Package}\n",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    packages_after = _parse_packages(packages_after_result.stdout or "")
+    before_pkgs = set(sandbox.packages_snapshot)
+    after_pkgs = set(packages_after)
+    package_changes = {
+        "added": sorted(after_pkgs - before_pkgs),
+        "removed": sorted(before_pkgs - after_pkgs),
+    }
+
     return {
         "name": sandbox.name,
         "container_id": sandbox.container_id,
         "fs_changes": fs_changes,
         "unit_changes": unit_changes,
+        "package_changes": package_changes,
     }
 
 

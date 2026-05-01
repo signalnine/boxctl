@@ -234,3 +234,80 @@ def test_main_dispatches_to_sandbox(isolated_state, good_runner, monkeypatch):
     rc = cli.main(["sandbox", "create", "viamain", "--image", "i"])
     assert rc == 0
     assert (isolated_state / "viamain.json").exists()
+
+
+# --- playbook subcommand (issue boxctl-n2m.6) ---------------------------
+
+
+def test_sandbox_help_lists_playbook(capsys):
+    parser = cli.create_parser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["sandbox", "--help"])
+    assert "playbook" in capsys.readouterr().out
+
+
+def test_playbook_prints_yaml_to_stdout(isolated_state, monkeypatch, capsys):
+    create_runner = FakeRunner({
+        ("podman", "--version"): _completed(),
+        ("podman", "run"): _completed(stdout="cidpb\n"),
+        ("systemctl", "list-unit-files", "--no-legend", "--no-pager"): _completed(stdout=""),
+        ("dpkg-query", "-W", "-f=${Package}\n"): _completed(stdout="bash\n"),
+    })
+    monkeypatch.setattr(cli, "_sandbox_runner", lambda: create_runner)
+    parser = cli.create_parser()
+    cli.cmd_sandbox(parser.parse_args(["sandbox", "create", "pb", "--image", "i"]))
+    capsys.readouterr()
+
+    diff_runner = FakeRunner({
+        ("podman", "--version"): _completed(),
+        ("podman", "diff", "cidpb"): _completed(stdout="A /etc/nginx/sites-enabled/foo\n"),
+        ("podman", "exec", "cidpb", "systemctl"): _completed(stdout="nginx.service enabled\n"),
+        ("podman", "exec", "cidpb", "dpkg-query", "-W", "-f=${Package}\n"): _completed(
+            stdout="bash\nnginx\n"
+        ),
+        ("podman", "exec", "cidpb", "cat", "/etc/nginx/sites-enabled/foo"): _completed(
+            stdout="server { listen 80; }\n"
+        ),
+    })
+    monkeypatch.setattr(cli, "_sandbox_runner", lambda: diff_runner)
+
+    rc = cli.cmd_sandbox(parser.parse_args(["sandbox", "playbook", "pb"]))
+    assert rc == 0
+    out = capsys.readouterr().out
+    import yaml
+    parsed = yaml.safe_load(out)
+    tasks = parsed[0]["tasks"]
+    kinds = [next(iter(t)) for t in tasks if not list(t)[0].startswith("name")]
+    # Just verify shape -- detailed assertions live in test_ansible.py
+    modules = {k for t in tasks for k in t if k != "name"}
+    assert "ansible.builtin.package" in modules
+    assert "ansible.builtin.copy" in modules
+    assert "ansible.builtin.systemd" in modules
+
+
+def test_playbook_writes_to_output_file(isolated_state, tmp_path, monkeypatch, capsys):
+    create_runner = FakeRunner({
+        ("podman", "--version"): _completed(),
+        ("podman", "run"): _completed(stdout="cidout\n"),
+    })
+    monkeypatch.setattr(cli, "_sandbox_runner", lambda: create_runner)
+    parser = cli.create_parser()
+    cli.cmd_sandbox(parser.parse_args(["sandbox", "create", "out", "--image", "i"]))
+    capsys.readouterr()
+
+    diff_runner = FakeRunner({("podman", "--version"): _completed()})
+    monkeypatch.setattr(cli, "_sandbox_runner", lambda: diff_runner)
+    out_path = tmp_path / "play.yml"
+    rc = cli.cmd_sandbox(parser.parse_args(["sandbox", "playbook", "out", "-o", str(out_path)]))
+    assert rc == 0
+    assert out_path.exists()
+    assert out_path.read_text().startswith("- ")  # YAML list start
+
+
+def test_playbook_unknown_sandbox_exits_2(isolated_state, monkeypatch, capsys):
+    runner = FakeRunner({("podman", "--version"): _completed()})
+    monkeypatch.setattr(cli, "_sandbox_runner", lambda: runner)
+    parser = cli.create_parser()
+    rc = cli.cmd_sandbox(parser.parse_args(["sandbox", "playbook", "ghost"]))
+    assert rc == 2
+    assert "ghost" in capsys.readouterr().err

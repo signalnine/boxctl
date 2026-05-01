@@ -238,3 +238,97 @@ def test_destroy_sandbox_idempotent_on_podman_failure(state_dir):
 def test_destroy_sandbox_missing_raises(state_dir):
     with pytest.raises(FileNotFoundError):
         sb.destroy_sandbox("ghost", runner=FakeRunner())
+
+
+# --- snapshot_packages (issue boxctl-n2m.6) -----------------------------
+
+
+def test_snapshot_packages_returns_sorted_unique_names():
+    runner = FakeRunner({
+        ("dpkg-query", "-W", "-f=${Package}\n"): _completed(
+            stdout="bash\ncoreutils\nbash\nzlib1g\n"
+        ),
+    })
+    pkgs = sb.snapshot_packages(runner=runner)
+    assert pkgs == ["bash", "coreutils", "zlib1g"]
+
+
+def test_snapshot_packages_returns_empty_on_missing_dpkg():
+    runner = FakeRunner({
+        ("dpkg-query",): FileNotFoundError("dpkg-query"),
+    })
+    assert sb.snapshot_packages(runner=runner) == []
+
+
+def test_snapshot_packages_returns_empty_on_nonzero_exit():
+    runner = FakeRunner({
+        ("dpkg-query", "-W", "-f=${Package}\n"): _completed(returncode=1, stderr="oops"),
+    })
+    assert sb.snapshot_packages(runner=runner) == []
+
+
+# --- create_sandbox + diff_sandbox include packages ---------------------
+
+
+def test_create_sandbox_captures_packages_snapshot(state_dir):
+    runner = FakeRunner({
+        ("podman", "run"): _completed(stdout="cidpkg\n"),
+        ("systemctl", "list-unit-files", "--no-legend", "--no-pager"): _completed(stdout=""),
+        ("dpkg-query", "-W", "-f=${Package}\n"): _completed(stdout="bash\nlibc6\n"),
+    })
+    s = sb.create_sandbox("pkgbox", image="debian:stable", runner=runner)
+    assert s.packages_snapshot == ["bash", "libc6"]
+    payload = json.loads((state_dir / "pkgbox.json").read_text())
+    assert payload["packages_snapshot"] == ["bash", "libc6"]
+
+
+def test_diff_sandbox_returns_package_changes(state_dir):
+    create_runner = FakeRunner({
+        ("podman", "run"): _completed(stdout="cid2\n"),
+        ("systemctl", "list-unit-files", "--no-legend", "--no-pager"): _completed(stdout=""),
+        ("dpkg-query", "-W", "-f=${Package}\n"): _completed(stdout="bash\nlibc6\n"),
+    })
+    sb.create_sandbox("pdiff", image="i", runner=create_runner)
+
+    diff_runner = FakeRunner({
+        ("podman", "diff", "cid2"): _completed(stdout=""),
+        ("podman", "exec", "cid2", "systemctl"): _completed(stdout=""),
+        ("podman", "exec", "cid2", "dpkg-query", "-W", "-f=${Package}\n"): _completed(
+            stdout="bash\nlibc6\nnginx\n"
+        ),
+    })
+    result = sb.diff_sandbox("pdiff", runner=diff_runner)
+    assert "package_changes" in result
+    assert result["package_changes"]["added"] == ["nginx"]
+    assert result["package_changes"]["removed"] == []
+
+
+def test_diff_sandbox_package_changes_detects_removed(state_dir):
+    create_runner = FakeRunner({
+        ("podman", "run"): _completed(stdout="cid3\n"),
+        ("systemctl", "list-unit-files", "--no-legend", "--no-pager"): _completed(stdout=""),
+        ("dpkg-query", "-W", "-f=${Package}\n"): _completed(stdout="bash\nlibc6\nnano\n"),
+    })
+    sb.create_sandbox("rdiff", image="i", runner=create_runner)
+
+    diff_runner = FakeRunner({
+        ("podman", "diff", "cid3"): _completed(stdout=""),
+        ("podman", "exec", "cid3", "systemctl"): _completed(stdout=""),
+        ("podman", "exec", "cid3", "dpkg-query", "-W", "-f=${Package}\n"): _completed(
+            stdout="bash\nlibc6\n"
+        ),
+    })
+    result = sb.diff_sandbox("rdiff", runner=diff_runner)
+    assert result["package_changes"]["added"] == []
+    assert result["package_changes"]["removed"] == ["nano"]
+
+
+def test_load_sandbox_tolerates_legacy_state_without_packages(state_dir, good_runner):
+    """Older state files predate packages_snapshot; load must default to []."""
+    sb.create_sandbox("legacy", image="i", runner=good_runner)
+    sf = state_dir / "legacy.json"
+    payload = json.loads(sf.read_text())
+    payload.pop("packages_snapshot", None)
+    sf.write_text(json.dumps(payload))
+    loaded = sb.load_sandbox("legacy")
+    assert loaded.packages_snapshot == []
