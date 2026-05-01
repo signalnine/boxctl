@@ -1,6 +1,7 @@
 """Configuration loading with layered overrides."""
 
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -8,13 +9,21 @@ import yaml
 
 
 def load_config_file(path: Path) -> dict[str, Any]:
-    """Load a YAML config file if it exists."""
+    """Load a YAML config file if it exists.
+
+    Missing files return ``{}`` silently. Malformed YAML emits a one-line
+    stderr warning naming the file and parser error, then returns ``{}``,
+    so misconfiguration is surfaced instead of silently dropped.
+    """
     if not path.exists():
         return {}
     try:
         with open(path) as f:
             return yaml.safe_load(f) or {}
-    except Exception:
+    except OSError:
+        return {}
+    except yaml.YAMLError as e:
+        print(f"boxctl: warning: failed to parse {path}: {e}", file=sys.stderr)
         return {}
 
 

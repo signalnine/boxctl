@@ -1,26 +1,84 @@
 """Script metadata linter."""
 
+import ast
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from boxctl.core.metadata import (
-    MAX_HEADER_LINES,
     MetadataError,
     parse_metadata,
     validate_metadata,
 )
 
 
+REQUIRED_RUN_PARAMS = ("args", "output", "context")
+
+
+def _check_run_entrypoint(content: str) -> str | None:
+    """Validate that the script defines ``def run(args, output, context)``.
+
+    Returns ``None`` if the entrypoint is well-formed, or an error message
+    describing what's wrong (no top-level run, wrong signature, etc.).
+    Files that fail to parse return a syntax-error message so the linter
+    surfaces the cause instead of silently passing.
+    """
+    try:
+        tree = ast.parse(content)
+    except SyntaxError as e:
+        return f"Cannot parse script: {e.msg} (line {e.lineno})"
+
+    run_node: ast.FunctionDef | ast.AsyncFunctionDef | None = None
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "run":
+            run_node = node
+            break
+
+    if run_node is None:
+        return (
+            "Missing top-level entrypoint: scripts must define "
+            "'def run(args, output, context)'"
+        )
+
+    args = run_node.args
+    if args.vararg or args.kwarg:
+        return (
+            "run() must take exactly (args, output, context); "
+            "*args/**kwargs are not allowed"
+        )
+
+    positional = [a.arg for a in args.posonlyargs] + [a.arg for a in args.args]
+    if len(positional) != len(REQUIRED_RUN_PARAMS):
+        return (
+            f"run() must take exactly {len(REQUIRED_RUN_PARAMS)} parameters "
+            f"({', '.join(REQUIRED_RUN_PARAMS)}); got "
+            f"{len(positional)} ({', '.join(positional) or 'none'})"
+        )
+
+    if tuple(positional) != REQUIRED_RUN_PARAMS:
+        return (
+            f"run() parameters must be named "
+            f"({', '.join(REQUIRED_RUN_PARAMS)}); got "
+            f"({', '.join(positional)})"
+        )
+
+    return None
+
+
 def _claims_boxctl_header(content: str) -> bool:
     """True if the file opens with the ``# boxctl:`` metadata marker.
 
-    Mirrors ``parse_metadata``'s lookup so we only lint files that declare
-    themselves boxctl scripts, ignoring any file that just happens to mention
-    the marker string (e.g. framework source or test fixtures).
+    Real scripts put ``# boxctl:`` on line 1 or 2 (immediately after the
+    optional shebang). Restricting the scan to the first few physical lines
+    avoids false positives from test files that embed fixture strings
+    containing the marker further down.
     """
-    for line in content.split("\n", MAX_HEADER_LINES)[:MAX_HEADER_LINES]:
-        if line.strip() == "# boxctl:":
+    for line in content.split("\n", 4)[:4]:
+        stripped = line.strip()
+        if stripped == "# boxctl:":
             return True
+        if stripped.startswith("#!") or stripped == "":
+            continue
+        return False
     return False
 
 
@@ -98,6 +156,10 @@ def lint_script(path: Path, known_scripts: set[str] | None = None) -> LintResult
     # Run validation for warnings
     warnings = validate_metadata(metadata)
     result.warnings.extend(warnings)
+
+    entrypoint_error = _check_run_entrypoint(content)
+    if entrypoint_error is not None:
+        result.errors.append(entrypoint_error)
 
     if known_scripts is not None:
         related = metadata.get("related") or []

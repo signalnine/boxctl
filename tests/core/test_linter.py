@@ -6,6 +6,11 @@ from pathlib import Path
 from boxctl.core.linter import lint_script, lint_all, LintResult, collect_script_names
 
 
+RUN_STUB = '''
+def run(args, output, context):
+    return 0
+'''
+
 VALID_SCRIPT = '''#!/usr/bin/env python3
 # boxctl:
 #   category: baremetal/disk
@@ -14,14 +19,17 @@ VALID_SCRIPT = '''#!/usr/bin/env python3
 #   privilege: root
 #   brief: Check disk health
 
-def main():
-    pass
+def run(args, output, context):
+    return 0
 '''
 
 MISSING_CATEGORY = '''#!/usr/bin/env python3
 # boxctl:
 #   tags: [health]
 #   brief: Missing category
+
+def run(args, output, context):
+    return 0
 '''
 
 INVALID_CATEGORY_FORMAT = '''#!/usr/bin/env python3
@@ -29,6 +37,9 @@ INVALID_CATEGORY_FORMAT = '''#!/usr/bin/env python3
 #   category: invalid
 #   tags: [health]
 #   brief: Bad category format
+
+def run(args, output, context):
+    return 0
 '''
 
 EMPTY_TAGS = '''#!/usr/bin/env python3
@@ -36,6 +47,9 @@ EMPTY_TAGS = '''#!/usr/bin/env python3
 #   category: baremetal/disk
 #   tags: []
 #   brief: Empty tags
+
+def run(args, output, context):
+    return 0
 '''
 
 INVALID_PRIVILEGE = '''#!/usr/bin/env python3
@@ -44,6 +58,9 @@ INVALID_PRIVILEGE = '''#!/usr/bin/env python3
 #   tags: [health]
 #   privilege: admin
 #   brief: Invalid privilege
+
+def run(args, output, context):
+    return 0
 '''
 
 NO_HEADER = '''#!/usr/bin/env python3
@@ -201,8 +218,8 @@ SCRIPT_WITH_GOOD_RELATED = '''#!/usr/bin/env python3
 #   related: [neighbor]
 #   brief: References neighbor
 
-def main():
-    pass
+def run(args, output, context):
+    return 0
 '''
 
 SCRIPT_WITH_DANGLING_RELATED = '''#!/usr/bin/env python3
@@ -212,8 +229,8 @@ SCRIPT_WITH_DANGLING_RELATED = '''#!/usr/bin/env python3
 #   related: [neighbor, nonexistent_script_xyz_does_not_exist]
 #   brief: References missing script
 
-def main():
-    pass
+def run(args, output, context):
+    return 0
 '''
 
 NEIGHBOR_SCRIPT = '''#!/usr/bin/env python3
@@ -221,7 +238,115 @@ NEIGHBOR_SCRIPT = '''#!/usr/bin/env python3
 #   category: baremetal/disk
 #   tags: [health]
 #   brief: Sibling script
+
+def run(args, output, context):
+    return 0
 '''
+
+
+SCRIPT_NO_RUN = '''#!/usr/bin/env python3
+# boxctl:
+#   category: baremetal/disk
+#   tags: [health]
+#   brief: Missing run entrypoint
+'''
+
+SCRIPT_WRONG_ARITY = '''#!/usr/bin/env python3
+# boxctl:
+#   category: baremetal/disk
+#   tags: [health]
+#   brief: Wrong run signature
+
+def run(args):
+    return 0
+'''
+
+SCRIPT_WRONG_PARAM_NAMES = '''#!/usr/bin/env python3
+# boxctl:
+#   category: baremetal/disk
+#   tags: [health]
+#   brief: Wrong run param names
+
+def run(a, b, c):
+    return 0
+'''
+
+SCRIPT_RUN_VARARGS = '''#!/usr/bin/env python3
+# boxctl:
+#   category: baremetal/disk
+#   tags: [health]
+#   brief: run uses *args/**kwargs
+
+def run(*args, **kwargs):
+    return 0
+'''
+
+SCRIPT_RUN_NESTED_ONLY = '''#!/usr/bin/env python3
+# boxctl:
+#   category: baremetal/disk
+#   tags: [health]
+#   brief: run is nested, not top-level
+
+class Wrapper:
+    def run(self, args, output, context):
+        return 0
+'''
+
+
+class TestRunEntrypoint:
+    """Tests that linter verifies the run(args, output, context) entrypoint."""
+
+    def test_missing_run_is_error(self, tmp_path):
+        script = tmp_path / "no_run.py"
+        script.write_text(SCRIPT_NO_RUN)
+
+        result = lint_script(script)
+
+        assert any("run" in e.lower() for e in result.errors), result.errors
+        assert not result.ok
+
+    def test_wrong_arity_is_error(self, tmp_path):
+        script = tmp_path / "wrong_arity.py"
+        script.write_text(SCRIPT_WRONG_ARITY)
+
+        result = lint_script(script)
+
+        assert any("run" in e.lower() for e in result.errors), result.errors
+
+    def test_wrong_param_names_is_error(self, tmp_path):
+        script = tmp_path / "wrong_names.py"
+        script.write_text(SCRIPT_WRONG_PARAM_NAMES)
+
+        result = lint_script(script)
+
+        assert any(
+            "args" in e and "output" in e and "context" in e for e in result.errors
+        ), result.errors
+
+    def test_varargs_run_is_error(self, tmp_path):
+        script = tmp_path / "varargs.py"
+        script.write_text(SCRIPT_RUN_VARARGS)
+
+        result = lint_script(script)
+
+        assert any("run" in e.lower() for e in result.errors), result.errors
+
+    def test_nested_run_does_not_count(self, tmp_path):
+        """A method called run() inside a class is not the entrypoint."""
+        script = tmp_path / "nested.py"
+        script.write_text(SCRIPT_RUN_NESTED_ONLY)
+
+        result = lint_script(script)
+
+        assert any("run" in e.lower() for e in result.errors), result.errors
+
+    def test_well_formed_run_passes(self, tmp_path):
+        script = tmp_path / "good.py"
+        script.write_text(VALID_SCRIPT)
+
+        result = lint_script(script)
+
+        assert result.errors == []
 
 
 class TestRelatedReferences:
@@ -259,6 +384,9 @@ class TestRelatedReferences:
             '#   tags: [health]\n'
             '#   related: [neighbor.py]\n'
             '#   brief: References neighbor with .py\n'
+            '\n'
+            'def run(args, output, context):\n'
+            '    return 0\n'
         )
 
         results = lint_all(tmp_path)

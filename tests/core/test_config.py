@@ -31,14 +31,25 @@ class TestLoadConfigFile:
 
         assert result == {"issue_platform": "github", "other": "value"}
 
-    def test_returns_empty_dict_on_invalid_yaml(self, tmp_path):
-        """Returns empty dict when YAML is invalid."""
+    def test_returns_empty_dict_on_invalid_yaml(self, tmp_path, capsys):
+        """Returns empty dict when YAML is invalid and warns to stderr."""
         config_file = tmp_path / "config.yaml"
         config_file.write_text("invalid: yaml: content: [")
 
         result = load_config_file(config_file)
 
         assert result == {}
+        captured = capsys.readouterr()
+        assert str(config_file) in captured.err
+        assert "warning" in captured.err.lower()
+
+    def test_missing_file_does_not_warn(self, tmp_path, capsys):
+        """A missing config file is silent (common case)."""
+        result = load_config_file(tmp_path / "nope.yaml")
+
+        assert result == {}
+        captured = capsys.readouterr()
+        assert captured.err == ""
 
     def test_returns_empty_dict_for_empty_file(self, tmp_path):
         """Returns empty dict for empty file."""

@@ -11,12 +11,18 @@ VALID_SCRIPT = '''#!/usr/bin/env python3
 #   category: baremetal/disk
 #   tags: [health]
 #   brief: Valid script
+
+def run(args, output, context):
+    return 0
 '''
 
 INVALID_SCRIPT = '''#!/usr/bin/env python3
 # boxctl:
 #   tags: [health]
 #   brief: Missing category
+
+def run(args, output, context):
+    return 0
 '''
 
 

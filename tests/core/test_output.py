@@ -39,8 +39,8 @@ class TestOutput:
         output = Output()
         output.emit({"status": "ok", "count": 5})
         result = output.to_plain()
-        assert "status" in result
-        assert "ok" in result
+        assert "Status" in result
+        assert "OK" in result
 
     def test_summary_property(self):
         """summary returns first line of plain output."""
@@ -121,6 +121,66 @@ class TestToPlainRedaction:
         o.emit({"token": "sk-abcdefghijklmnopqrstuvwxyz0123"})
         result = o.to_plain(redact=False)
         assert "sk-abcdefghijklmnopqrstuvwxyz0123" in result
+
+
+class TestToPlainRenderParity:
+    """to_plain() must produce the same body as render(format='plain').
+
+    Previously to_plain() did a flat ``key: value`` dump and ignored the
+    structured status/issues/errors/warnings sections that render() surfaces.
+    Both paths now share the same builder so they cannot drift.
+    """
+
+    def test_to_plain_surfaces_status_section(self):
+        o = Output()
+        o.emit({"status": "warning", "count": 3})
+        result = o.to_plain()
+        assert "[WARNING] Status: WARNING" in result
+        assert "Count: 3" in result
+
+    def test_to_plain_surfaces_issues_section(self):
+        o = Output()
+        o.emit({
+            "status": "warning",
+            "issues": [{"severity": "error", "message": "disk full"}],
+        })
+        result = o.to_plain()
+        assert "Issues:" in result
+        assert "[ERROR] disk full" in result
+
+    def test_to_plain_includes_recorded_errors(self):
+        o = Output()
+        o.error("kubectl not found")
+        result = o.to_plain()
+        assert "Errors:" in result
+        assert "kubectl not found" in result
+
+    def test_to_plain_includes_recorded_warnings(self):
+        o = Output()
+        o.warning("disk degraded")
+        result = o.to_plain()
+        assert "Warnings:" in result
+        assert "disk degraded" in result
+
+    def test_to_plain_matches_render_plain_output(self, capsys):
+        """to_plain() and render(format='plain') produce equivalent text."""
+        data = {
+            "status": "warning",
+            "count": 5,
+            "issues": [{"severity": "warning", "message": "almost full"}],
+        }
+        o1 = Output()
+        o1.emit(data)
+        o1.error("partial failure")
+        o1.render(format="plain")
+        rendered = capsys.readouterr().out.rstrip("\n")
+
+        o2 = Output()
+        o2.emit(data)
+        o2.error("partial failure")
+        plain = o2.to_plain()
+
+        assert plain == rendered
 
 
 class TestRenderNonFiniteFloats:

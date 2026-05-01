@@ -58,26 +58,25 @@ class Output:
         return json.dumps(view, indent=2, default=str)
 
     def to_plain(self, redact: bool = True) -> str:
-        """Return data as plain text.
+        """Return data as plain text using the same renderer as ``render()``.
+
+        Merges ``self.errors`` and ``self.warnings`` into the rendered view
+        the same way ``render()`` does, so callers that prefer to capture the
+        string instead of printing it see the structured status/issues/errors
+        sections rather than a flat ``key: value`` dump.
 
         Redacts by default; pass ``redact=False`` for raw output.
         ``BOXCTL_NO_REDACT=1`` in the environment also disables redaction.
         """
         if os.environ.get("BOXCTL_NO_REDACT") == "1":
             redact = False
-        source = redact_value(self.data) if redact else self.data
-        lines = []
-        for key, value in source.items():
-            if isinstance(value, list):
-                lines.append(f"{key}:")
-                for item in value:
-                    if isinstance(item, dict):
-                        lines.append(f"  - {item}")
-                    else:
-                        lines.append(f"  - {item}")
-            else:
-                lines.append(f"{key}: {value}")
-        return "\n".join(lines)
+        merged = dict(self.data)
+        if self.errors:
+            merged["errors"] = list(merged.get("errors", [])) + list(self.errors)
+        if self.warnings:
+            merged["warnings"] = list(merged.get("warnings", [])) + list(self.warnings)
+        view = redact_value(merged) if redact else merged
+        return self._build_plain(view)
 
     def render(
         self,
@@ -130,6 +129,14 @@ class Output:
         """Render output as formatted plain text."""
         if data is None:
             data = self.data
+        print(self._build_plain(data, title))
+
+    def _build_plain(self, data: dict, title: str | None = None) -> str:
+        """Build the plain-text representation without printing.
+
+        Shared between ``render(format='plain')`` and ``to_plain()`` so the
+        two paths cannot drift.
+        """
         lines = []
 
         # Title
@@ -197,7 +204,7 @@ class Output:
                 else:
                     lines.append(f"  [WARNING] {warning}")
 
-        print("\n".join(lines))
+        return "\n".join(lines)
 
     def _render_value(self, lines: list, key: str | int, value: Any, indent: int = 0) -> None:
         """Recursively render a value with proper formatting."""
