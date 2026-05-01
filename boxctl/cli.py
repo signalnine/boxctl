@@ -142,6 +142,38 @@ def create_parser() -> argparse.ArgumentParser:
     source_prep.add_argument("--inventory", help="Path to hosts inventory YAML")
     source_prep.add_argument("--timeout", type=int, default=60)
 
+    # sandbox command (issue boxctl-n2m.5)
+    sandbox_parser = subparsers.add_parser(
+        "sandbox",
+        help="Manage ephemeral container sandboxes for mutation experiments",
+    )
+    sandbox_sub = sandbox_parser.add_subparsers(
+        dest="sandbox_command", help="sandbox subcommand"
+    )
+
+    sb_create = sandbox_sub.add_parser(
+        "create", help="Spawn a podman container and snapshot host config"
+    )
+    sb_create.add_argument("name", help="Sandbox name (alphanumeric, _, -)")
+    sb_create.add_argument("--from", dest="source_host", help="Source host name from inventory (informational)")
+    sb_create.add_argument(
+        "--image",
+        default="docker.io/library/debian:stable",
+        help="Container image (default: docker.io/library/debian:stable)",
+    )
+
+    sandbox_sub.add_parser("list", help="List active sandboxes")
+
+    sb_diff = sandbox_sub.add_parser(
+        "diff", help="Show filesystem + unit-state diff against snapshot"
+    )
+    sb_diff.add_argument("name", help="Sandbox name")
+
+    sb_destroy = sandbox_sub.add_parser(
+        "destroy", help="Stop, remove the container, and delete state"
+    )
+    sb_destroy.add_argument("name", help="Sandbox name")
+
     # request command
     request_parser = subparsers.add_parser(
         "request",
@@ -613,6 +645,107 @@ def cmd_mcp(args: argparse.Namespace) -> int:
     return 0
 
 
+def _sandbox_runner():
+    """Indirection so tests can substitute a fake `subprocess.run`."""
+    return subprocess.run
+
+
+def cmd_sandbox(args: argparse.Namespace) -> int:
+    """Manage ephemeral container sandboxes (issue boxctl-n2m.5)."""
+    import json as _json
+
+    from boxctl.core import sandbox as sb
+
+    sub = getattr(args, "sandbox_command", None)
+    if sub is None:
+        print("Usage: boxctl sandbox {create,list,diff,destroy} ...", file=sys.stderr)
+        return 2
+
+    runner = _sandbox_runner()
+    if not sb.check_podman(runner):
+        print(
+            "Error: podman is required for sandbox operations but was not found",
+            file=sys.stderr,
+        )
+        return 2
+
+    if sub == "create":
+        try:
+            sandbox = sb.create_sandbox(
+                args.name,
+                image=args.image,
+                source_host=getattr(args, "source_host", None),
+                runner=runner,
+            )
+        except ValueError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 2
+        except FileExistsError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+        except RuntimeError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 1
+
+        if args.format == "json":
+            print(_json.dumps(sandbox.to_dict(), indent=2, sort_keys=True))
+        else:
+            print(f"Created sandbox {sandbox.name} ({sandbox.container_id[:12]}) from {sandbox.image}")
+        return 0
+
+    if sub == "list":
+        sandboxes = sb.list_sandboxes()
+        if args.format == "json":
+            print(_json.dumps([s.to_dict() for s in sandboxes], indent=2, sort_keys=True))
+        else:
+            if not sandboxes:
+                print("No sandboxes.")
+                return 0
+            for s in sandboxes:
+                print(f"{s.name:20} {s.image:40} {s.container_id[:12]}")
+        return 0
+
+    if sub == "diff":
+        try:
+            result = sb.diff_sandbox(args.name, runner=runner)
+        except FileNotFoundError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 2
+
+        if args.format == "json":
+            print(_json.dumps(result, indent=2, sort_keys=True))
+        else:
+            print(f"Sandbox: {result['name']}")
+            print("Filesystem changes:")
+            for line in result["fs_changes"] or ["  (none)"]:
+                print(f"  {line}")
+            uc = result["unit_changes"]
+            print("Unit changes:")
+            for label in ("added", "removed", "changed"):
+                entries = uc.get(label) or []
+                if not entries:
+                    continue
+                print(f"  {label}:")
+                for e in entries:
+                    print(f"    {e}")
+            if not any(uc.get(k) for k in ("added", "removed", "changed")):
+                print("  (none)")
+        return 0
+
+    if sub == "destroy":
+        try:
+            sb.destroy_sandbox(args.name, runner=runner)
+        except FileNotFoundError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 2
+        if args.format != "json":
+            print(f"Destroyed sandbox {args.name}")
+        return 0
+
+    print(f"Unknown sandbox subcommand: {sub}", file=sys.stderr)
+    return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     """Main entry point."""
     parser = create_parser()
@@ -635,6 +768,7 @@ def main(argv: list[str] | None = None) -> int:
         "request": cmd_request,
         "mcp": cmd_mcp,
         "source": cmd_source,
+        "sandbox": cmd_sandbox,
     }
 
     return commands[args.command](args)
