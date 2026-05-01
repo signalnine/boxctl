@@ -37,6 +37,13 @@ class TestListTool:
     def test_no_match_empty(self):
         assert list_scripts_tool(SCRIPTS_DIR, category="nosuchcategory") == []
 
+    def test_partial_category_word_does_not_match(self):
+        """category='bare' must not match 'baremetal/*' (mirrors discovery.matches)."""
+        assert list_scripts_tool(SCRIPTS_DIR, category="bare") == []
+        full = list_scripts_tool(SCRIPTS_DIR, category="baremetal")
+        assert len(full) > 0
+        assert all(r["category"].startswith("baremetal") for r in full)
+
 
 class TestSearchTool:
     def test_returns_matches(self):

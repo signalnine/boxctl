@@ -41,7 +41,7 @@ def list_scripts_tool(
     scripts = discover_scripts(scripts_dir)
     out = []
     for s in sorted(scripts, key=lambda x: x.name):
-        if category and not s.category.startswith(category):
+        if category and not (s.category == category or s.category.startswith(category + "/")):
             continue
         if tag and tag not in s.tags:
             continue
