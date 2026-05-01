@@ -41,7 +41,7 @@ def run_command(
     except Exception as e:
         if check:
             raise CommandError(f"Command failed: {cmd}") from e
-        raise CommandError(f"Command failed: {cmd}") from e
+        return ""
 
 
 def check_tool(

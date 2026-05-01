@@ -21,14 +21,14 @@ class TestRunCommand:
         assert output == "hello\n"
 
     def test_raises_on_failure(self, mock_context):
-        """Raises CommandError on non-zero exit."""
+        """Raises CommandError on non-zero exit when check=True."""
         ctx = mock_context(
             tools_available=["false"],
             command_outputs={("false",): subprocess.CalledProcessError(1, "false")},
         )
 
         with pytest.raises(CommandError, match="Command failed"):
-            run_command(["false"], context=ctx)
+            run_command(["false"], context=ctx, check=True)
 
     def test_returns_empty_on_quiet_failure(self, mock_context):
         """Returns None when check=False and command fails."""
@@ -40,6 +40,29 @@ class TestRunCommand:
         output = run_command(["false"], context=ctx)
 
         assert output == ""
+
+    def test_returns_empty_when_check_false_and_subprocess_raises(self, mock_context):
+        """check=False swallows subprocess exceptions and returns empty string."""
+        ctx = mock_context(
+            command_outputs={
+                ("/nonexistent/binary",): FileNotFoundError("/nonexistent/binary"),
+            },
+        )
+
+        output = run_command(["/nonexistent/binary"], context=ctx, check=False)
+
+        assert output == ""
+
+    def test_raises_when_check_true_and_subprocess_raises(self, mock_context):
+        """check=True surfaces subprocess exceptions as CommandError."""
+        ctx = mock_context(
+            command_outputs={
+                ("/nonexistent/binary",): FileNotFoundError("/nonexistent/binary"),
+            },
+        )
+
+        with pytest.raises(CommandError, match="Command failed"):
+            run_command(["/nonexistent/binary"], context=ctx, check=True)
 
 
 class TestCheckTool:
