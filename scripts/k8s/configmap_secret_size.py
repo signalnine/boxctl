@@ -5,7 +5,7 @@
 #   requires: [kubectl]
 #   privilege: user
 #   brief: Analyze ConfigMap and Secret sizes for etcd health
-#   related: [k8s/control_plane, k8s/etcd_health]
+#   related: [control_plane, etcd_health]
 
 """
 ConfigMap and Secret Size Analyzer - Find oversized objects in Kubernetes.

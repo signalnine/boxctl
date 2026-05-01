@@ -4,7 +4,7 @@
 #   tags: [network, latency, ping, monitoring, performance]
 #   requires: [ping]
 #   privilege: user
-#   related: [network_qdisc_monitor, network_socket_monitor]
+#   related: [network_qdisc_monitor, socket_state_monitor]
 #   brief: Monitor network latency to configured peers and gateways
 
 """

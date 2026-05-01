@@ -4,7 +4,7 @@
 #   tags: [health, smart, storage, hardware]
 #   requires: [smartctl]
 #   privilege: root
-#   related: [disk_space_forecaster, disk_life_predictor, disk_io_latency_monitor]
+#   related: [disk_space_forecaster, disk_life_predictor, disk_io_latency]
 #   brief: Check disk health using SMART attributes
 
 """

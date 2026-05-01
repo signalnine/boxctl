@@ -4,7 +4,7 @@
 #   tags: [kubernetes, events, monitoring, cluster]
 #   requires: [kubectl]
 #   privilege: none
-#   related: [pod_status, node_health]
+#   related: [node_health]
 #   brief: Monitor Kubernetes events to track cluster issues
 
 """

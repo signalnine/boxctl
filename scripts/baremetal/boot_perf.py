@@ -4,7 +4,7 @@
 #   tags: [boot, systemd, performance, startup]
 #   requires: [systemd-analyze]
 #   privilege: none
-#   related: [systemd_health, service_check]
+#   related: [systemd_service_monitor]
 #   brief: Monitor system boot performance and systemd initialization times
 
 """

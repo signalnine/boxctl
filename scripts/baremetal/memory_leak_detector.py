@@ -4,7 +4,7 @@
 #   tags: [memory, leak, process, monitoring]
 #   requires: []
 #   privilege: user
-#   related: [memory_error_detector, memory_reclaim_monitor, process_monitor]
+#   related: [memory_error_detector, memory_reclaim_monitor, process_tree]
 #   brief: Detect potential memory leaks by monitoring process memory growth
 
 """

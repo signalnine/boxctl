@@ -5,7 +5,7 @@
 #   requires: [kubectl]
 #   brief: Analyze Pod Disruption Budget coverage across workloads
 #   privilege: user
-#   related: [pdb_health, node_drain]
+#   related: [pdb_health, node_drain_readiness]
 
 """
 Analyze Pod Disruption Budget (PDB) coverage across Kubernetes workloads.

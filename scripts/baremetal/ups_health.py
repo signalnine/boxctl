@@ -4,7 +4,7 @@
 #   tags: [ups, power, battery, nut, apc, hardware]
 #   requires: []
 #   privilege: user
-#   related: [power_profile, thermal_monitor]
+#   related: [power_consumption, thermal_throttle]
 #   brief: Monitor UPS (Uninterruptible Power Supply) status
 
 """

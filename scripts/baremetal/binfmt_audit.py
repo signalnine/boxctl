@@ -4,7 +4,7 @@
 #   tags: [security, audit, binfmt, compliance]
 #   requires: []
 #   privilege: none
-#   related: [kernel_modules, sysctl_check]
+#   related: [kernel_module_audit, sysctl_drift_detector]
 #   brief: Audit binfmt_misc binary format handlers for security
 
 """

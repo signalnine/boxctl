@@ -4,7 +4,7 @@
 #   tags: [network, qdisc, traffic, drops, performance]
 #   requires: [tc]
 #   privilege: user
-#   related: [network_peer_latency, network_socket_monitor]
+#   related: [network_peer_latency, socket_state_monitor]
 #   brief: Monitor network qdisc statistics for packet drops and congestion
 
 """

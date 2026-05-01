@@ -5,7 +5,7 @@
 #   requires: [kubectl]
 #   brief: Monitor GitOps controller sync status for Flux CD and ArgoCD
 #   privilege: user
-#   related: [k8s/helm_releases, k8s/deployment_health]
+#   related: [helm_releases, deployment_status]
 
 """
 Monitor GitOps controller sync status for Flux CD and ArgoCD.

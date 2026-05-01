@@ -5,7 +5,7 @@
 #   requires: [kubectl]
 #   privilege: user
 #   brief: Detect Kubernetes version skew and compatibility issues
-#   related: [k8s/node_health, k8s/api_deprecation]
+#   related: [node_health, api_deprecation]
 
 """
 Kubernetes version skew checker - Detect version compatibility issues in clusters.

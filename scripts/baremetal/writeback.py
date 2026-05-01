@@ -4,7 +4,7 @@
 #   tags: [writeback, dirty-pages, io, disk, performance]
 #   requires: []
 #   privilege: user
-#   related: [disk_io_latency, memory_pressure, swap_usage]
+#   related: [disk_io_latency, memory_pressure, swap_monitor]
 #   brief: Monitor kernel writeback cache behavior and dirty page pressure
 
 """

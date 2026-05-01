@@ -4,7 +4,7 @@
 #   tags: [configmap, audit, best-practices, storage]
 #   requires: [kubectl]
 #   privilege: user
-#   related: [secret_audit, pod_status]
+#   related: [secret_audit]
 #   brief: Audit Kubernetes ConfigMaps for common issues
 
 """

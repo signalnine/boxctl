@@ -5,7 +5,7 @@
 #   requires: [kubectl]
 #   brief: Monitor DaemonSet health with node coverage and pod status
 #   privilege: user
-#   related: [k8s/node_capacity, k8s/pod_restarts]
+#   related: [node_capacity, container_restart_analyzer]
 
 """
 Monitor Kubernetes DaemonSet health with node coverage and pod status.

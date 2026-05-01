@@ -5,7 +5,7 @@
 #   requires: [kubectl]
 #   privilege: user
 #   brief: Analyze Kubernetes Custom Resource Definition health and usage
-#   related: [k8s/api_deprecation, k8s/control_plane]
+#   related: [api_deprecation, control_plane]
 
 """
 Kubernetes CRD Health Analyzer - Analyze Custom Resource Definition health.

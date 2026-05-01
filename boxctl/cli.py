@@ -303,17 +303,18 @@ def cmd_search(args: argparse.Namespace) -> int:
 
 def cmd_lint(args: argparse.Namespace) -> int:
     """Validate script metadata headers."""
-    from boxctl.core.linter import lint_script, lint_all, LintResult
+    from boxctl.core.linter import lint_script, lint_all, LintResult, collect_script_names
 
     if args.scripts:
-        # Lint specific scripts
+        # Lint specific scripts; resolve related: entries against the full corpus.
+        known_scripts = collect_script_names(args.scripts_dir)
         results = []
         for script_name in args.scripts:
             path = args.scripts_dir / script_name
             if not path.suffix:
                 path = path.with_suffix(".py")
             if path.exists():
-                results.append(lint_script(path))
+                results.append(lint_script(path, known_scripts=known_scripts))
             else:
                 results.append(LintResult(path=path, errors=[f"File not found: {path}"]))
     else:

@@ -5,7 +5,7 @@
 #   requires: [kubectl]
 #   brief: Monitor EndpointSlice health and detect service discovery issues
 #   privilege: user
-#   related: [k8s/service_endpoints, k8s/ingress_health]
+#   related: [service_endpoint, ingress_health]
 
 """
 Monitor Kubernetes EndpointSlice health and detect service discovery issues.

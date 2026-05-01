@@ -4,7 +4,7 @@
 #   tags: [health, service, sshd, security, daemon]
 #   requires: [sshd]
 #   privilege: root
-#   related: [systemd_services]
+#   related: [systemd_service_monitor]
 #   brief: Monitor SSH daemon health, configuration, and connection limits
 
 """

@@ -4,7 +4,7 @@
 #   tags: [audit, security, compliance, logging]
 #   requires: [auditctl]
 #   privilege: root
-#   related: [systemd_health, journal_check]
+#   related: [systemd_service_monitor, systemd_journal_analyzer]
 #   brief: Monitor Linux audit daemon health and configuration
 
 """

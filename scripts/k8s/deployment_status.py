@@ -4,7 +4,7 @@
 #   tags: [deployment, statefulset, health, rollout]
 #   requires: [kubectl]
 #   privilege: user
-#   related: [pod_status, replica_monitor]
+#   related: [replicaset_health]
 #   brief: Monitor Deployment and StatefulSet health status
 
 """

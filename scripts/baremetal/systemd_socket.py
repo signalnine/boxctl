@@ -4,7 +4,7 @@
 #   tags: [systemd, socket, activation, services]
 #   requires: [systemctl]
 #   privilege: user
-#   related: [systemd_health, systemd_drift, systemd_timers]
+#   related: [systemd_service_monitor, systemd_drift, systemd_timer_monitor]
 #   brief: Monitor systemd socket activation units for health and connection status
 
 """

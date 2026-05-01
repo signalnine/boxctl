@@ -4,7 +4,7 @@
 #   tags: [hardware, inventory, dmi, smbios, bios, asset]
 #   requires: []
 #   privilege: user
-#   related: [firmware_inventory, firmware_version_audit]
+#   related: [firmware_inventory]
 #   brief: Report DMI/SMBIOS hardware inventory and asset information
 
 """

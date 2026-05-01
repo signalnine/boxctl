@@ -4,7 +4,7 @@
 #   tags: [resources, capacity, chargeback, governance]
 #   requires: [kubectl]
 #   privilege: none
-#   related: [namespace_resource_summary, pod_resource_analyzer]
+#   related: [namespace_resource_summary, pod_resource_audit]
 #   brief: Analyze namespace resource utilization for capacity planning
 
 """

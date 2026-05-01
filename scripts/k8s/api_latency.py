@@ -5,7 +5,7 @@
 #   requires: [kubectl]
 #   privilege: user
 #   brief: Measure and analyze Kubernetes API server response times
-#   related: [k8s/control_plane, k8s/node_capacity]
+#   related: [control_plane, node_capacity]
 
 """
 Kubernetes API Server Latency Analyzer - Measure API response times.

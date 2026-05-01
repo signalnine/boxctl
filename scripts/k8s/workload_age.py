@@ -5,7 +5,7 @@
 #   requires: [kubectl]
 #   privilege: user
 #   brief: Analyze workload restart age across Kubernetes clusters
-#   related: [k8s/pod_restarts, k8s/workload_ownership]
+#   related: [container_restart_analyzer, workload_ownership]
 
 """
 Analyze workload restart age across Kubernetes clusters.

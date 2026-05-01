@@ -5,7 +5,7 @@
 #   requires: [kubectl]
 #   brief: Monitor emptyDir volume usage and identify pods at risk
 #   privilege: user
-#   related: [k8s/pv_health, k8s/node_capacity]
+#   related: [pv_health, node_capacity]
 
 """
 Monitor Kubernetes emptyDir volume usage and identify pods at risk.

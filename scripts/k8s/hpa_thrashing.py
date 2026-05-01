@@ -5,7 +5,7 @@
 #   requires: [kubectl]
 #   brief: Detect HPA thrashing in Kubernetes clusters
 #   privilege: user
-#   related: [k8s/hpa_health, k8s/pod_restarts]
+#   related: [hpa_health, container_restart_analyzer]
 
 """
 Detect Horizontal Pod Autoscaler (HPA) thrashing in Kubernetes clusters.

@@ -5,7 +5,7 @@
 #   requires: [kubectl]
 #   privilege: user
 #   brief: Check for deprecated or removed Kubernetes API versions
-#   related: [k8s/control_plane, k8s/crd_health]
+#   related: [control_plane, crd_health]
 
 """
 Kubernetes API Deprecation Checker - Scan cluster for deprecated API versions.

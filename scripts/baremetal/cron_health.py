@@ -4,7 +4,7 @@
 #   tags: [health, service, cron, scheduler, daemon]
 #   requires: [cron]
 #   privilege: root
-#   related: [systemd_timers]
+#   related: [systemd_timer_monitor]
 #   brief: Monitor cron job health and configuration issues
 
 """

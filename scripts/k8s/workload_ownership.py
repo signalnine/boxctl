@@ -5,7 +5,7 @@
 #   requires: [kubectl]
 #   privilege: user
 #   brief: Analyze Kubernetes workload ownership and generation chains
-#   related: [k8s/orphaned_resources, k8s/pod_restarts]
+#   related: [orphaned_resources_finder, container_restart_analyzer]
 
 """
 Analyze Kubernetes workload ownership and generation chains.

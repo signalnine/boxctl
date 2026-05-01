@@ -5,7 +5,7 @@
 #   requires: [kubectl]
 #   privilege: user
 #   brief: Monitor Kubernetes StatefulSet health with detailed pod and PVC status
-#   related: [k8s/pv_health, k8s/pod_restarts, k8s/deployment_health]
+#   related: [pv_health, container_restart_analyzer, deployment_status]
 
 """
 Monitor Kubernetes StatefulSet health with detailed pod and PVC status.

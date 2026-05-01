@@ -4,7 +4,7 @@
 #   tags: [rbac, security, audit, permissions]
 #   requires: [kubectl]
 #   privilege: none
-#   related: [serviceaccount_auditor, pod_security_auditor]
+#   related: [serviceaccount_auditor, security_audit]
 #   brief: Audit RBAC roles and bindings for security issues
 
 """

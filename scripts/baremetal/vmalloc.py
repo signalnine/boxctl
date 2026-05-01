@@ -4,7 +4,7 @@
 #   tags: [memory, vmalloc, kernel, resources]
 #   requires: []
 #   privilege: user
-#   related: [memory_pressure, swap_usage, oom_risk]
+#   related: [memory_pressure, swap_monitor, oom_risk_analyzer]
 #   brief: Monitor kernel vmalloc memory usage to detect exhaustion before failures
 
 """

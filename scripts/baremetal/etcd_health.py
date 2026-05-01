@@ -4,7 +4,7 @@
 #   tags: [health, service, etcd, distributed, consensus]
 #   requires: [etcdctl]
 #   privilege: user
-#   related: [consul_health]
+#   related: []
 #   brief: Monitor etcd cluster health and performance
 
 """

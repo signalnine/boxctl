@@ -4,7 +4,7 @@
 #   tags: [udp, sockets, network, resources, connections]
 #   requires: []
 #   privilege: user
-#   related: [tcp_connections, conntrack_monitor, network_health]
+#   related: [tcp_connection_monitor, conntrack_monitor, route_health_monitor]
 #   brief: Monitor UDP socket usage to detect resource exhaustion and anomalies
 
 """

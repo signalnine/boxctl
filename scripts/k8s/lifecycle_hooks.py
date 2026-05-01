@@ -5,7 +5,7 @@
 #   requires: [kubectl]
 #   brief: Analyze pod lifecycle hook configurations
 #   privilege: user
-#   related: [pdb_coverage, node_drain]
+#   related: [pdb_coverage, node_drain_readiness]
 
 """
 Kubernetes Pod Lifecycle Hook Analyzer

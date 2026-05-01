@@ -5,7 +5,7 @@
 #   requires: [kubectl]
 #   brief: Monitor HorizontalPodAutoscaler health and effectiveness
 #   privilege: user
-#   related: [k8s/hpa_thrashing, k8s/node_capacity]
+#   related: [hpa_thrashing, node_capacity]
 
 """
 Monitor HorizontalPodAutoscaler (HPA) health and effectiveness.

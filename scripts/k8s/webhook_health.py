@@ -5,7 +5,7 @@
 #   requires: [kubectl]
 #   privilege: user
 #   brief: Monitor Kubernetes admission webhook health and configuration
-#   related: [k8s/secret_expiry, k8s/api_deprecation]
+#   related: [secret_expiry, api_deprecation]
 
 """
 Kubernetes Webhook Health Monitor

@@ -5,7 +5,7 @@
 #   requires: [kubectl]
 #   privilege: user
 #   brief: Monitor Kubernetes CNI (Container Network Interface) health
-#   related: [k8s/node_health, k8s/pod_network]
+#   related: [node_health, cni_health]
 
 """
 Kubernetes CNI Health Monitor - Monitor Container Network Interface health.

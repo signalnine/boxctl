@@ -5,7 +5,7 @@
 #   requires: [kubectl]
 #   privilege: user
 #   brief: Monitor Kubernetes backup health including Velero, VolumeSnapshots, and CronJobs
-#   related: [k8s/volume_health, k8s/pvc_health]
+#   related: [volume_attachment, pvc_stuck]
 
 """
 Kubernetes Backup Health Monitor - Monitor backup systems in Kubernetes.

@@ -4,7 +4,7 @@
 #   tags: [resources, capacity, cost, efficiency]
 #   requires: [kubectl]
 #   privilege: none
-#   related: [namespace_resource_analyzer, pod_resource_analyzer]
+#   related: [namespace_resource_analyzer, pod_resource_audit]
 #   brief: Summarize namespace resource allocation and usage
 
 """

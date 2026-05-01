@@ -5,7 +5,7 @@
 #   requires: [helm]
 #   brief: Monitor Helm release health and deployment status
 #   privilege: user
-#   related: [k8s/gitops_sync, k8s/deployment_health]
+#   related: [gitops_sync, deployment_status]
 
 """
 Monitor Helm release health and deployment status in Kubernetes clusters.

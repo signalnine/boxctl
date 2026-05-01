@@ -4,7 +4,7 @@
 #   tags: [systemd, drift, config, audit, compliance]
 #   requires: [systemctl]
 #   privilege: user
-#   related: [systemd_health, systemd_socket, systemd_timers]
+#   related: [systemd_service_monitor, systemd_socket, systemd_timer_monitor]
 #   brief: Detect systemd unit files with local overrides or modifications
 
 """

@@ -38,12 +38,41 @@ class LintResult:
         return len(self.errors) == 0
 
 
-def lint_script(path: Path) -> LintResult:
+def collect_script_names(directory: Path) -> set[str]:
+    """Return the set of valid boxctl script names (without ``.py``) in a tree.
+
+    Used by lint_all and the CLI to resolve ``related:`` references across the
+    full script corpus.
+    """
+    names: set[str] = set()
+    for path in directory.rglob("*.py"):
+        if not path.is_file():
+            continue
+        try:
+            content = path.read_text()
+        except OSError:
+            continue
+        if not _claims_boxctl_header(content):
+            continue
+        try:
+            metadata = parse_metadata(content)
+        except MetadataError:
+            continue
+        if metadata is None:
+            continue
+        names.add(path.stem)
+    return names
+
+
+def lint_script(path: Path, known_scripts: set[str] | None = None) -> LintResult:
     """
     Lint a single script.
 
     Args:
         path: Path to the script file
+        known_scripts: If provided, ``related:`` entries are checked against
+            this set of valid script names (without ``.py``). Unresolved
+            entries are reported as errors. Pass ``None`` to skip the check.
 
     Returns:
         LintResult with errors and warnings
@@ -70,6 +99,20 @@ def lint_script(path: Path) -> LintResult:
     warnings = validate_metadata(metadata)
     result.warnings.extend(warnings)
 
+    if known_scripts is not None:
+        related = metadata.get("related") or []
+        if isinstance(related, list):
+            for ref in related:
+                if not isinstance(ref, str):
+                    continue
+                ref_name = ref.removesuffix(".py")
+                if ref_name == path.stem:
+                    continue
+                if ref_name not in known_scripts:
+                    result.errors.append(
+                        f"Unknown related script: '{ref}' does not resolve to a real script"
+                    )
+
     return result
 
 
@@ -87,6 +130,7 @@ def lint_all(directory: Path) -> list[LintResult]:
     Returns:
         List of LintResult for each discovered boxctl script
     """
+    known_scripts = collect_script_names(directory)
     results = []
 
     for path in directory.rglob("*.py"):
@@ -98,6 +142,6 @@ def lint_all(directory: Path) -> list[LintResult]:
             continue
         if not _claims_boxctl_header(content):
             continue
-        results.append(lint_script(path))
+        results.append(lint_script(path, known_scripts=known_scripts))
 
     return results

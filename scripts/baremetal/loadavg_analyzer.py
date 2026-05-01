@@ -4,7 +4,7 @@
 #   tags: [load, cpu, performance, capacity]
 #   requires: []
 #   privilege: user
-#   related: [cpu_pressure_monitor, run_queue_monitor]
+#   related: [proc_pressure, run_queue]
 #   brief: Analyze system load average and CPU scheduling pressure
 
 """

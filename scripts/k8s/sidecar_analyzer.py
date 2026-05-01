@@ -5,7 +5,7 @@
 #   requires: [kubectl]
 #   privilege: user
 #   brief: Analyze Kubernetes sidecar container patterns and resource usage
-#   related: [k8s/pod_restarts, k8s/node_capacity]
+#   related: [container_restart_analyzer, node_capacity]
 
 """
 Analyze Kubernetes sidecar container patterns and resource usage.

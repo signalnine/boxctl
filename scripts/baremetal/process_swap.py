@@ -4,7 +4,7 @@
 #   tags: [swap, memory, process, pressure]
 #   requires: []
 #   privilege: user
-#   related: [memory_pressure, oom_analyzer]
+#   related: [memory_pressure, oom_kill_history]
 #   brief: Monitor per-process swap usage to identify swap pressure sources
 
 """

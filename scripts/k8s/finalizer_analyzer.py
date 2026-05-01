@@ -5,7 +5,7 @@
 #   requires: [kubectl]
 #   brief: Find resources stuck due to finalizers
 #   privilege: user
-#   related: [k8s/namespace_health, k8s/pod_health]
+#   related: [namespace_resource_analyzer, restart_monitor]
 
 """
 Kubernetes finalizer analyzer - Find resources stuck due to finalizers.

@@ -3,7 +3,7 @@
 import pytest
 from pathlib import Path
 
-from boxctl.core.linter import lint_script, lint_all, LintResult
+from boxctl.core.linter import lint_script, lint_all, LintResult, collect_script_names
 
 
 VALID_SCRIPT = '''#!/usr/bin/env python3
@@ -192,3 +192,95 @@ class TestLintResult:
         result = lint_script(script_file)
 
         assert result.ok is False
+
+
+SCRIPT_WITH_GOOD_RELATED = '''#!/usr/bin/env python3
+# boxctl:
+#   category: baremetal/disk
+#   tags: [health]
+#   related: [neighbor]
+#   brief: References neighbor
+
+def main():
+    pass
+'''
+
+SCRIPT_WITH_DANGLING_RELATED = '''#!/usr/bin/env python3
+# boxctl:
+#   category: baremetal/disk
+#   tags: [health]
+#   related: [neighbor, nonexistent_script_xyz_does_not_exist]
+#   brief: References missing script
+
+def main():
+    pass
+'''
+
+NEIGHBOR_SCRIPT = '''#!/usr/bin/env python3
+# boxctl:
+#   category: baremetal/disk
+#   tags: [health]
+#   brief: Sibling script
+'''
+
+
+class TestRelatedReferences:
+    """Tests for related: cross-reference validation in lint_all."""
+
+    def test_dangling_related_is_lint_error(self, tmp_path):
+        """A related: entry that does not resolve to a real script flags an error."""
+        (tmp_path / "neighbor.py").write_text(NEIGHBOR_SCRIPT)
+        (tmp_path / "broken.py").write_text(SCRIPT_WITH_DANGLING_RELATED)
+
+        results = lint_all(tmp_path)
+        broken = next(r for r in results if r.path.name == "broken.py")
+
+        assert any(
+            "nonexistent_script_xyz_does_not_exist" in e for e in broken.errors
+        ), broken.errors
+
+    def test_resolved_related_does_not_error(self, tmp_path):
+        """A related: entry that points to a real sibling script does not error."""
+        (tmp_path / "neighbor.py").write_text(NEIGHBOR_SCRIPT)
+        (tmp_path / "good.py").write_text(SCRIPT_WITH_GOOD_RELATED)
+
+        results = lint_all(tmp_path)
+        good = next(r for r in results if r.path.name == "good.py")
+
+        assert good.errors == []
+
+    def test_related_accepts_dotpy_suffix(self, tmp_path):
+        """``related: [foo.py]`` resolves the same as ``related: [foo]``."""
+        (tmp_path / "neighbor.py").write_text(NEIGHBOR_SCRIPT)
+        (tmp_path / "ref.py").write_text(
+            '#!/usr/bin/env python3\n'
+            '# boxctl:\n'
+            '#   category: baremetal/disk\n'
+            '#   tags: [health]\n'
+            '#   related: [neighbor.py]\n'
+            '#   brief: References neighbor with .py\n'
+        )
+
+        results = lint_all(tmp_path)
+        ref = next(r for r in results if r.path.name == "ref.py")
+
+        assert ref.errors == []
+
+    def test_collect_script_names_skips_non_scripts(self, tmp_path):
+        """collect_script_names ignores files without a boxctl header."""
+        (tmp_path / "neighbor.py").write_text(NEIGHBOR_SCRIPT)
+        (tmp_path / "__init__.py").write_text('"""init."""\n')
+        (tmp_path / "helper.py").write_text(NO_HEADER)
+
+        names = collect_script_names(tmp_path)
+
+        assert names == {"neighbor"}
+
+    def test_lint_script_skips_related_check_without_known_set(self, tmp_path):
+        """lint_script(path) without known_scripts does not flag related entries."""
+        script = tmp_path / "broken.py"
+        script.write_text(SCRIPT_WITH_DANGLING_RELATED)
+
+        result = lint_script(script)
+
+        assert result.errors == []

@@ -5,7 +5,7 @@
 #   requires: [kubectl]
 #   privilege: user
 #   brief: Monitor Kubernetes Secret age and TLS certificate expiration
-#   related: [k8s/configmap_health, k8s/webhook_health]
+#   related: [configmap_audit, webhook_health]
 
 """
 Monitor Kubernetes Secret age and TLS certificate expiration.

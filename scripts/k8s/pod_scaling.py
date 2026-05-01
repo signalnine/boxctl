@@ -5,7 +5,7 @@
 #   requires: [kubectl]
 #   brief: Analyze pod counts and scaling configuration
 #   privilege: user
-#   related: [node_capacity, resource_quota]
+#   related: [node_capacity, resource_quota_auditor]
 
 """
 Analyze Kubernetes pod counts and scaling configuration.

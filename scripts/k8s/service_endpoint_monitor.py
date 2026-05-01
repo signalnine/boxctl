@@ -4,7 +4,7 @@
 #   tags: [service, endpoint, health, connectivity]
 #   requires: [kubectl]
 #   privilege: user
-#   related: [ingress_health, pod_status]
+#   related: [ingress_health]
 #   brief: Monitor Kubernetes Service endpoint health
 
 """

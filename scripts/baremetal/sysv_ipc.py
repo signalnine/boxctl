@@ -4,7 +4,7 @@
 #   tags: [ipc, semaphores, shared-memory, message-queues, resources]
 #   requires: [ipcs]
 #   privilege: user
-#   related: [memory_pressure, process_limits]
+#   related: [memory_pressure, process_limits_monitor]
 #   brief: Monitor System V IPC resource usage (semaphores, shared memory, message queues)
 
 """

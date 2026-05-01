@@ -4,7 +4,7 @@
 #   tags: [mount, security, audit, compliance, cis]
 #   requires: []
 #   privilege: user
-#   related: [security_audit, filesystem_audit]
+#   related: [security_audit, filesystem_usage]
 #   brief: Audit filesystem mount options for security compliance
 
 """

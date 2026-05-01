@@ -4,7 +4,7 @@
 #   tags: [livepatch, security, kernel, compliance]
 #   requires: []
 #   privilege: user
-#   related: [kernel_taint_check, security_audit]
+#   related: [kernel_taint, security_audit]
 #   brief: Monitor kernel live patching status for security compliance
 
 """

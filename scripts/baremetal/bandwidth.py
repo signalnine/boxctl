@@ -4,7 +4,7 @@
 #   tags: [network, bandwidth, throughput, monitoring]
 #   requires: []
 #   privilege: none
-#   related: [network_connections, tcp_socket_monitor]
+#   related: [tcp_connection_monitor]
 #   brief: Monitor network interface bandwidth utilization
 
 """

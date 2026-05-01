@@ -4,7 +4,7 @@
 #   tags: [namespace, troubleshooting, finalizers, cleanup]
 #   requires: [kubectl]
 #   privilege: none
-#   related: [namespace_resource_analyzer, pod_health_auditor]
+#   related: [namespace_resource_analyzer, restart_monitor]
 #   brief: Analyze namespaces stuck in Terminating state
 
 """

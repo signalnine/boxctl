@@ -4,7 +4,7 @@
 #   tags: [health, service, haproxy, loadbalancer, proxy]
 #   requires: [haproxy]
 #   privilege: root
-#   related: [nginx_health]
+#   related: []
 #   brief: Monitor HAProxy load balancer health and backend status
 
 """

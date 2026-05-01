@@ -4,7 +4,7 @@
 #   tags: [health, service, dns, resolver, network]
 #   requires: []
 #   privilege: user
-#   related: [network_health]
+#   related: [route_health_monitor]
 #   brief: Monitor DNS resolver configuration and health
 
 """

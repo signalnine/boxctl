@@ -4,7 +4,7 @@
 #   tags: [memory, reclaim, vmstat, pressure, performance]
 #   requires: []
 #   privilege: user
-#   related: [memory_error_detector, memory_leak_detector, oom_monitor]
+#   related: [memory_error_detector, memory_leak_detector, oom_kill_history]
 #   brief: Monitor kernel memory reclamation activity and detect memory pressure
 
 """

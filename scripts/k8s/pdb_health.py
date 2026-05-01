@@ -5,7 +5,7 @@
 #   requires: [kubectl]
 #   brief: Monitor PodDisruptionBudget health and availability
 #   privilege: user
-#   related: [pdb_coverage, node_drain]
+#   related: [pdb_coverage, node_drain_readiness]
 
 """
 Monitor Kubernetes PodDisruptionBudget health and availability.

@@ -5,7 +5,7 @@
 #   requires: [kubectl]
 #   privilege: user
 #   brief: Analyze Kubernetes workload distribution across topology zones
-#   related: [k8s/node_capacity, k8s/pod_pending]
+#   related: [node_capacity, pending_pod_analyzer]
 
 """
 Analyze Kubernetes workload distribution across topology zones.

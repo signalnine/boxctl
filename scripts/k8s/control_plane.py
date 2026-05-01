@@ -5,7 +5,7 @@
 #   requires: [kubectl]
 #   privilege: user
 #   brief: Monitor Kubernetes control plane component health
-#   related: [k8s/api_latency, k8s/node_health]
+#   related: [api_latency, node_health]
 
 """
 Kubernetes Control Plane Health Monitor - Monitor control plane components.
