@@ -93,6 +93,91 @@ def test_summarize_extracts_systemd_enable_and_disable():
     assert kinds == ["add", "remove"]
 
 
+def test_summarize_systemd_state_only_started_is_add():
+    """systemd tasks setting only `state: started` (no `enabled`) must
+    classify as add, not remove. Previously `enabled is None` fell into
+    the remove branch and the operator saw a misleading '-' marker
+    (issue boxctl-5bi)."""
+    pb = """- name: test
+  hosts: all
+  tasks:
+    - name: Start nginx.service
+      ansible.builtin.systemd:
+        name: nginx.service
+        state: started
+"""
+    out = approval.summarize_playbook(pb)
+    assert len(out["tasks"]) == 1
+    assert out["tasks"][0]["kind"] == "add"
+
+
+def test_summarize_systemd_state_only_stopped_is_remove():
+    pb = """- name: test
+  hosts: all
+  tasks:
+    - name: Stop cron.service
+      ansible.builtin.systemd:
+        name: cron.service
+        state: stopped
+"""
+    out = approval.summarize_playbook(pb)
+    assert len(out["tasks"]) == 1
+    assert out["tasks"][0]["kind"] == "remove"
+
+
+def test_summarize_systemd_state_restarted_is_add():
+    pb = """- name: test
+  hosts: all
+  tasks:
+    - name: Restart sshd
+      ansible.builtin.systemd:
+        name: sshd.service
+        state: restarted
+"""
+    out = approval.summarize_playbook(pb)
+    assert out["tasks"][0]["kind"] == "add"
+
+
+def test_summarize_systemd_state_masked_is_remove():
+    pb = """- name: test
+  hosts: all
+  tasks:
+    - name: Mask telnet
+      ansible.builtin.systemd:
+        name: telnet.service
+        state: masked
+"""
+    out = approval.summarize_playbook(pb)
+    assert out["tasks"][0]["kind"] == "remove"
+
+
+def test_summarize_systemd_no_signals_is_change():
+    """systemd task with neither enabled nor a known state -- e.g. only
+    `daemon_reload: true` -- shouldn't be misclassified as add or remove."""
+    pb = """- name: test
+  hosts: all
+  tasks:
+    - name: Daemon reload
+      ansible.builtin.systemd:
+        daemon_reload: true
+"""
+    out = approval.summarize_playbook(pb)
+    assert len(out["tasks"]) == 1
+    assert out["tasks"][0]["kind"] == "change"
+
+
+def test_render_summary_change_uses_tilde_marker():
+    summary = {
+        "tasks": [
+            {"kind": "change", "module": "systemd", "target": "sshd.service", "name": "Reload"},
+        ],
+        "errors": [],
+    }
+    out = approval.render_summary(summary, color=False)
+    assert "~ systemd" in out
+    assert "sshd.service" in out
+
+
 def test_summarize_invalid_yaml_records_error():
     out = approval.summarize_playbook(":\n  not: [valid yaml")
     assert out["tasks"] == []

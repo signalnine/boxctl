@@ -43,13 +43,37 @@ _MODULE_SHORT = {
     "ansible.builtin.systemd": "systemd",
 }
 
+_SYSTEMD_ADD_STATES = {"started", "restarted", "reloaded"}
+_SYSTEMD_REMOVE_STATES = {"stopped", "absent", "masked"}
+
+
+def _classify_systemd(args: dict[str, Any]) -> str:
+    """Decide add/remove/change for a systemd task. Drives the operator's
+    +/-/~ marker, so misclassifying a state-only task as remove (the old
+    bug) directly undermines the approval gate -- issue boxctl-5bi.
+
+    Precedence: explicit `enabled` wins, then `state` keywords, otherwise
+    fall back to `change` (e.g. `daemon_reload`-only tasks).
+    """
+    enabled = args.get("enabled")
+    if enabled is True:
+        return "add"
+    if enabled is False:
+        return "remove"
+    state = args.get("state")
+    if state in _SYSTEMD_ADD_STATES:
+        return "add"
+    if state in _SYSTEMD_REMOVE_STATES:
+        return "remove"
+    return "change"
+
 
 def _classify_task(task: dict[str, Any]) -> dict[str, Any] | None:
     """Map an Ansible task dict to a {kind, module, target, name} summary entry.
 
-    kind is one of "add" or "remove". Returns None for tasks we do not
-    know how to summarize (still safe -- they will appear in the raw
-    playbook view).
+    kind is one of "add", "remove", or "change". Returns None for tasks
+    we do not know how to summarize (still safe -- they will appear in
+    the raw playbook view).
     """
     name = task.get("name", "")
     for full_module, short in _MODULE_SHORT.items():
@@ -76,10 +100,8 @@ def _classify_task(task: dict[str, Any]) -> dict[str, Any] | None:
                 "name": name,
             }
         if short == "systemd":
-            enabled = args.get("enabled")
-            kind = "add" if enabled else "remove"
             return {
-                "kind": kind,
+                "kind": _classify_systemd(args),
                 "module": short,
                 "target": args.get("name", ""),
                 "name": name,
@@ -129,14 +151,16 @@ def render_summary(summary: dict[str, Any], color: bool) -> str:
         if color:
             header = f"{_BOLD}{header}{_RESET}"
         lines.append(header)
+        markers = {"add": "+", "remove": "-", "change": "~"}
+        colors = {"add": _GREEN, "remove": _RED, "change": _YELLOW}
         for t in tasks:
             kind = t.get("kind", "?")
             module = t.get("module", "?")
             target = t.get("target", "")
-            marker = "+" if kind == "add" else "-"
+            marker = markers.get(kind, "?")
             line = f"  {marker} {module:<8} {target}"
             if color:
-                col = _GREEN if kind == "add" else _RED
+                col = colors.get(kind, _YELLOW)
                 line = f"  {col}{marker}{_RESET} {col}{module:<8}{_RESET} {target}"
             lines.append(line)
 

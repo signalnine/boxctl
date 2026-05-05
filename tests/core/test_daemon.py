@@ -221,6 +221,48 @@ def test_invalid_token_returns_403(daemon_env):
     assert status == 403
 
 
+def test_get_hosts_with_query_string_returns_200(daemon_env):
+    """Query strings on otherwise-valid routes must not 404. Previously the
+    dispatcher matched on raw self.path so /hosts?limit=10 fell through
+    (issue boxctl-wux)."""
+    server, _state, _spawn = daemon_env
+    status, payload = _request(
+        server, "GET", "/hosts?limit=10",
+        headers={"Authorization": "Bearer reader-tok"},
+    )
+    assert status == 200
+    body = json.loads(payload)
+    assert sorted(h["name"] for h in body) == ["db-1", "web-1"]
+
+
+def test_get_runs_with_query_string_returns_200(daemon_env):
+    server, _state, _spawn = daemon_env
+    status, _ = _request(
+        server, "GET", "/runs?since=2026-04-01",
+        headers={"Authorization": "Bearer reader-tok"},
+    )
+    assert status == 200
+
+
+def test_get_hosts_with_trailing_slash_returns_200(daemon_env):
+    """``/hosts/`` and ``/hosts`` should resolve to the same endpoint."""
+    server, _state, _spawn = daemon_env
+    status, _ = _request(
+        server, "GET", "/hosts/",
+        headers={"Authorization": "Bearer reader-tok"},
+    )
+    assert status == 200
+
+
+def test_unknown_path_with_query_still_returns_404(daemon_env):
+    server, _state, _spawn = daemon_env
+    status, _ = _request(
+        server, "GET", "/nope?x=y",
+        headers={"Authorization": "Bearer reader-tok"},
+    )
+    assert status == 404
+
+
 def test_post_sandbox_with_operator_spawns_201(daemon_env):
     server, _state, spawn_calls = daemon_env
     body = json.dumps({"name": "sb1", "image": "debian:stable"}).encode()

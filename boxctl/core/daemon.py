@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlsplit
 
 import yaml
 
@@ -215,26 +216,33 @@ def make_handler(state: DaemonState) -> type[BaseHTTPRequestHandler]:
                 pass
 
         def _handle(self, method: str, body: bytes | None = None) -> None:
-            path = self.path
+            # Strip query string and normalize trailing slash so
+            # /hosts?limit=10 and /hosts/ both reach the right handler
+            # (issue boxctl-wux). The access log still records the raw
+            # path the client sent.
+            raw_path = self.path
+            route = urlsplit(raw_path).path
+            if len(route) > 1 and route.endswith("/"):
+                route = route.rstrip("/")
             token, role = self._auth()
 
             if token is None:
                 self._send_status(401, "missing or malformed Authorization header")
-                self._log(401, method, path, token, role)
+                self._log(401, method, raw_path, token, role)
                 return
 
             if role is None:
                 self._send_status(403, "unknown token")
-                self._log(403, method, path, token, role)
+                self._log(403, method, raw_path, token, role)
                 return
 
             try:
-                status = self._dispatch(method, path, role, body)
+                status = self._dispatch(method, route, role, body)
             except _HTTPError as e:
                 self._send_status(e.status, e.message)
                 status = e.status
 
-            self._log(status, method, path, token, role)
+            self._log(status, method, raw_path, token, role)
 
         def _dispatch(self, method: str, path: str, role: str, body: bytes | None) -> int:
             if method == "GET" and path == "/hosts":
