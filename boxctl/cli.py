@@ -706,18 +706,32 @@ def cmd_source(args: argparse.Namespace) -> int:
 
 def cmd_apply(args: argparse.Namespace) -> int:
     """Review a playbook, prompt for approval, log the decision (issue boxctl-n2m.7)."""
+    import hashlib
+
     from boxctl.core import approval
+    from boxctl.core.redact import redact_value
 
     pb_path = Path(args.playbook)
     if not pb_path.exists():
         print(f"Error: playbook not found: {pb_path}", file=sys.stderr)
         return 2
+    # Refuse symlinks -- a TOCTOU window between display and apply would
+    # otherwise let an attacker swap the link target after the operator
+    # said yes (gap analysis P0 #3 / P1 #11).
+    if pb_path.is_symlink():
+        print(
+            f"Error: refusing to read playbook via symlink: {pb_path}",
+            file=sys.stderr,
+        )
+        return 2
 
     try:
-        playbook_text = pb_path.read_text()
+        playbook_bytes = pb_path.read_bytes()
     except OSError as e:
         print(f"Error: cannot read playbook {pb_path}: {e}", file=sys.stderr)
         return 2
+    playbook_text = playbook_bytes.decode("utf-8", errors="replace")
+    playbook_hash = hashlib.sha256(playbook_bytes).hexdigest()
 
     summary = approval.summarize_playbook(playbook_text)
 
@@ -728,8 +742,12 @@ def cmd_apply(args: argparse.Namespace) -> int:
 
     print(approval.render_summary(summary, color=use_color))
     print()
+    print(f"sha256: {playbook_hash}")
     print("--- playbook ---")
-    print(playbook_text, end="" if playbook_text.endswith("\n") else "\n")
+    # Redact secrets (PEM keys, AWS keys, JWTs, ...) before display so CI
+    # logs that capture stdout don't store the raw secret (gap analysis P1 #9).
+    display_text = redact_value(playbook_text)
+    print(display_text, end="" if display_text.endswith("\n") else "\n")
     print("--- end ---")
 
     if args.dry_run:
@@ -742,12 +760,17 @@ def cmd_apply(args: argparse.Namespace) -> int:
         decision = "approved" if approval.prompt_approval() else "rejected"
 
     log_path = Path(args.audit_log) if args.audit_log else None
-    written = approval.log_decision(
-        playbook_path=str(pb_path),
-        decision=decision,
-        summary=summary,
-        log_path=log_path,
-    )
+    try:
+        written = approval.log_decision(
+            playbook_path=str(pb_path),
+            decision=decision,
+            summary=summary,
+            log_path=log_path,
+            playbook_hash=playbook_hash,
+        )
+    except PermissionError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 2
     print(f"Decision: {decision} (logged to {written})")
     return 0 if decision == "approved" else 1
 
@@ -920,6 +943,22 @@ def cmd_daemon(args: argparse.Namespace) -> int:
         access_log_path=access_path,
         sandbox_spawn=real_spawn,
     )
+
+    # Warn loudly if bound to a non-loopback address: anyone on the
+    # network with a token gains operator/admin role on this host
+    # (gap analysis P2 #17). Loopback addresses are 127.0.0.0/8, ::1,
+    # and the literal "localhost".
+    bind = args.bind or ""
+    if not (
+        bind == "localhost"
+        or bind == "::1"
+        or bind.startswith("127.")
+    ):
+        print(
+            f"WARNING: daemon binding to non-loopback address {bind!r}; "
+            "any client that reaches this host can attempt token auth.",
+            file=sys.stderr,
+        )
 
     server = daemon_mod.start_server(state, host=args.bind, port=args.port)
     daemon_mod._LAST_SERVER = server

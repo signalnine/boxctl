@@ -263,6 +263,229 @@ def test_unknown_path_with_query_still_returns_404(daemon_env):
     assert status == 404
 
 
+def test_access_log_strips_query_string(daemon_env):
+    """Secrets passed in URL query strings (e.g. /hosts?api_key=xyz)
+    should NOT land in the access log (gap analysis P1 #6)."""
+    server, state, _spawn = daemon_env
+    _request(
+        server, "GET", "/hosts?api_key=secret-do-not-log",
+        headers={"Authorization": "Bearer reader-tok"},
+    )
+    log_text = state.access_log_path.read_text()
+    assert "secret-do-not-log" not in log_text
+    assert "api_key" not in log_text
+    # The path field should still be present, just without the query.
+    assert any(json.loads(ln)["path"] == "/hosts" for ln in log_text.splitlines() if ln)
+
+
+def test_post_sandbox_rejects_malformed_image(daemon_env):
+    """Image references go through validate_image_ref before spawn so the
+    daemon doesn't pull from arbitrary user-controlled registries
+    (gap analysis P0 #5 / P1 #8)."""
+    server, _state, spawn_calls = daemon_env
+    body = json.dumps({"name": "sb1", "image": "img;rm -rf /"}).encode()
+    status, _ = _request(
+        server, "POST", "/sandbox",
+        headers={
+            "Authorization": "Bearer operator-tok",
+            "Content-Type": "application/json",
+            "Content-Length": str(len(body)),
+        },
+        body=body,
+    )
+    assert status == 400
+    assert spawn_calls == []
+
+
+class TestRateLimiter:
+    """Unit-level checks of the rate limiter -- the integration test below
+    exercises the daemon plumbing."""
+
+    def test_allows_under_limit(self):
+        from boxctl.core.daemon import RateLimiter
+
+        limiter = RateLimiter(max_attempts=3, window_seconds=60)
+        assert limiter.allow("1.2.3.4") is True
+        assert limiter.allow("1.2.3.4") is True
+        assert limiter.allow("1.2.3.4") is True
+
+    def test_blocks_over_limit(self):
+        from boxctl.core.daemon import RateLimiter
+
+        limiter = RateLimiter(max_attempts=2, window_seconds=60)
+        assert limiter.allow("1.2.3.4") is True
+        assert limiter.allow("1.2.3.4") is True
+        assert limiter.allow("1.2.3.4") is False
+
+    def test_per_ip_independent(self):
+        from boxctl.core.daemon import RateLimiter
+
+        limiter = RateLimiter(max_attempts=1, window_seconds=60)
+        assert limiter.allow("1.1.1.1") is True
+        assert limiter.allow("2.2.2.2") is True
+        assert limiter.allow("1.1.1.1") is False
+
+    def test_window_expires(self, monkeypatch):
+        """Old attempts age out so legitimate clients aren't locked out
+        forever after a typo."""
+        from boxctl.core import daemon as d
+
+        clock = [1000.0]
+        monkeypatch.setattr(d.time, "monotonic", lambda: clock[0])
+        limiter = d.RateLimiter(max_attempts=2, window_seconds=10)
+        assert limiter.allow("a") is True
+        assert limiter.allow("a") is True
+        assert limiter.allow("a") is False
+        clock[0] = 1011.0  # past window
+        assert limiter.allow("a") is True
+
+
+def test_repeated_bad_tokens_eventually_429(daemon_env, monkeypatch):
+    """Brute-forcing bearer tokens must eventually get rate-limited
+    (gap analysis P1 #7). The default limit is generous enough not to
+    affect normal use but tight enough to make brute force impractical."""
+    server, state, _spawn = daemon_env
+    from boxctl.core import daemon as d
+
+    # Reset and shrink the limiter so the test runs quickly.
+    state.rate_limiter = d.RateLimiter(max_attempts=3, window_seconds=60)
+
+    statuses = []
+    for _ in range(6):
+        status, _ = _request(
+            server, "GET", "/hosts",
+            headers={"Authorization": "Bearer wrong-tok"},
+        )
+        statuses.append(status)
+    # First 3 attempts are 403 (unknown token); subsequent get 429.
+    assert statuses.count(429) >= 1
+    assert statuses[-1] == 429
+
+
+def test_successful_auth_doesnt_consume_quota(daemon_env):
+    """Rate limit only counts FAILED attempts, so a steady stream of
+    valid requests from one IP isn't blocked."""
+    server, state, _spawn = daemon_env
+    from boxctl.core import daemon as d
+
+    state.rate_limiter = d.RateLimiter(max_attempts=3, window_seconds=60)
+
+    for _ in range(10):
+        status, _ = _request(
+            server, "GET", "/hosts",
+            headers={"Authorization": "Bearer reader-tok"},
+        )
+        assert status == 200
+
+
+class TestDaemonMaliciousInputs:
+    """Adversarial inputs must produce 4xx responses, not crashes or
+    successful side effects (gap analysis P2 #13)."""
+
+    def test_malformed_authorization_header(self, daemon_env):
+        server, _state, _ = daemon_env
+        # No Bearer prefix at all -- malformed.
+        status, _ = _request(
+            server, "GET", "/hosts",
+            headers={"Authorization": "wrong-format-no-prefix"},
+        )
+        assert status == 401
+
+    def test_authorization_with_only_bearer_keyword(self, daemon_env):
+        server, _state, _ = daemon_env
+        status, _ = _request(
+            server, "GET", "/hosts",
+            headers={"Authorization": "Bearer"},
+        )
+        # Empty token after the keyword -> auth fails. Should be 401 (no
+        # token) or 403 (token "" not in map). Either is acceptable; not
+        # 200, not 500.
+        assert status in (401, 403)
+
+    def test_oversized_body_rejected(self, daemon_env):
+        """A 5MB JSON body shouldn't be loaded into memory then parsed --
+        the daemon should reject before exhausting RAM."""
+        server, _state, spawn_calls = daemon_env
+        # Build a body that's syntactically valid but unreasonably large.
+        big = b'{"name": "sb1", "image": "' + b"a" * (5 * 1024 * 1024) + b'"}'
+        status, _ = _request(
+            server, "POST", "/sandbox",
+            headers={
+                "Authorization": "Bearer operator-tok",
+                "Content-Type": "application/json",
+                "Content-Length": str(len(big)),
+            },
+            body=big,
+        )
+        # Either 400 (size cap) or 400 (image validation rejects long ref).
+        assert status == 400
+        assert spawn_calls == []
+
+    def test_unicode_in_image_string_rejected(self, daemon_env):
+        server, _state, spawn_calls = daemon_env
+        # Non-ASCII characters aren't part of the OCI image grammar.
+        body = json.dumps({"name": "sb1", "image": "img‮tag"}).encode()
+        status, _ = _request(
+            server, "POST", "/sandbox",
+            headers={
+                "Authorization": "Bearer operator-tok",
+                "Content-Type": "application/json",
+                "Content-Length": str(len(body)),
+            },
+            body=body,
+        )
+        assert status == 400
+        assert spawn_calls == []
+
+    def test_invalid_sandbox_name_rejected(self, daemon_env):
+        """Names with shell metacharacters must not reach create_sandbox."""
+        server, _state, spawn_calls = daemon_env
+        body = json.dumps({"name": "bad;name", "image": "debian:stable"}).encode()
+        status, _ = _request(
+            server, "POST", "/sandbox",
+            headers={
+                "Authorization": "Bearer operator-tok",
+                "Content-Type": "application/json",
+                "Content-Length": str(len(body)),
+            },
+            body=body,
+        )
+        # The name validation happens inside spawn (raises ValueError),
+        # which the dispatcher maps to 409. Either 400 or 409 is fine,
+        # we just need NOT-201 and no real spawn.
+        assert status in (400, 409)
+
+    def test_post_sandbox_array_body_rejected(self, daemon_env):
+        server, _state, _ = daemon_env
+        body = json.dumps([1, 2, 3]).encode()
+        status, _ = _request(
+            server, "POST", "/sandbox",
+            headers={
+                "Authorization": "Bearer operator-tok",
+                "Content-Type": "application/json",
+                "Content-Length": str(len(body)),
+            },
+            body=body,
+        )
+        assert status == 400
+
+
+def test_post_sandbox_rejects_non_string_image(daemon_env):
+    server, _state, spawn_calls = daemon_env
+    body = json.dumps({"name": "sb1", "image": 12345}).encode()
+    status, _ = _request(
+        server, "POST", "/sandbox",
+        headers={
+            "Authorization": "Bearer operator-tok",
+            "Content-Type": "application/json",
+            "Content-Length": str(len(body)),
+        },
+        body=body,
+    )
+    assert status == 400
+    assert spawn_calls == []
+
+
 def test_post_sandbox_with_operator_spawns_201(daemon_env):
     server, _state, spawn_calls = daemon_env
     body = json.dumps({"name": "sb1", "image": "debian:stable"}).encode()

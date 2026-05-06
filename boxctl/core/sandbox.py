@@ -26,7 +26,41 @@ Runner = Callable[..., subprocess.CompletedProcess]
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 
+# Image references arrive from operator input and the daemon's /sandbox
+# POST body. Restrict to the OCI grammar plus optional registry, port, tag,
+# or digest. List-based subprocess prevents shell injection regardless,
+# but rejecting nonsense up front gives a clearer error than letting
+# `podman pull` fail and avoids surprising registries (gap analysis P0 #5
+# / P1 #8).
+_IMAGE_RE = re.compile(
+    r"^"
+    r"(?:[A-Za-z0-9][A-Za-z0-9._-]*(?::[0-9]+)?/)?"            # optional registry[:port]/
+    r"[A-Za-z0-9][A-Za-z0-9._/-]*"                              # repo path
+    r"(?::[A-Za-z0-9._-]+|@sha256:[a-f0-9]{64})?"               # :tag or @sha256:digest
+    r"$"
+)
+_IMAGE_MAX_LEN = 256
+
 DEFAULT_IMAGE = "docker.io/library/debian:stable"
+
+DEFAULT_MEMORY = "512m"
+DEFAULT_PIDS_LIMIT = 256
+
+
+def validate_image_ref(image: str) -> str:
+    """Reject malformed image references before they reach podman.
+
+    Returns the input on success; raises ValueError on bad input. The
+    regex deliberately disallows whitespace, shell metacharacters, and
+    overlong strings -- legitimate OCI refs need none of those.
+    """
+    if not isinstance(image, str) or not image:
+        raise ValueError("image reference is required")
+    if len(image) > _IMAGE_MAX_LEN:
+        raise ValueError(f"image reference too long ({len(image)} > {_IMAGE_MAX_LEN})")
+    if not _IMAGE_RE.match(image):
+        raise ValueError(f"invalid image reference: {image!r}")
+    return image
 
 
 @dataclass
@@ -157,45 +191,106 @@ def _validate_name(name: str) -> str:
     return name
 
 
+def _isolation_args() -> list[str]:
+    """Safe-by-default flags for ``podman run``.
+
+    A sandbox is for observing what mutations *would* do on a host -- it
+    is not a containment boundary for adversarial code. Even so, the cost
+    of the obvious flags is zero and the upside is that a runaway
+    experiment can't reach the host network, escalate via Linux caps, or
+    fork-bomb the box. (gap analysis P0 #4)
+    """
+    return [
+        "--network=none",
+        "--cap-drop=ALL",
+        "--security-opt=no-new-privileges",
+        "--read-only",
+        "--tmpfs=/tmp:rw,size=64m",
+        "--tmpfs=/run:rw,size=16m",
+        f"--memory={DEFAULT_MEMORY}",
+        f"--pids-limit={DEFAULT_PIDS_LIMIT}",
+    ]
+
+
 def create_sandbox(
     name: str,
     image: str = DEFAULT_IMAGE,
     source_host: str | None = None,
     runner: Runner | None = None,
+    unsafe: bool = False,
 ) -> Sandbox:
-    """Spawn a long-lived podman container and persist sandbox state."""
+    """Spawn a long-lived podman container and persist sandbox state.
+
+    By default the container runs with `--network=none`, all capabilities
+    dropped, no-new-privileges, read-only rootfs (with tmpfs at /tmp + /run),
+    and resource limits. ``unsafe=True`` opts out -- intended for the rare
+    case where the operator legitimately needs network access (e.g. apt
+    install validation), at which point the looser policy is explicit.
+    """
     _validate_name(name)
+    validate_image_ref(image)
     sf = _state_file(name)
-    if sf.exists():
+    sf.parent.mkdir(parents=True, exist_ok=True)
+    # Atomic create-if-not-exists: O_CREAT|O_EXCL races against any
+    # concurrent caller, so two simultaneous `create_sandbox("x")` calls
+    # can't both reach `podman run` and orphan one container.
+    # (gap analysis P1 #10)
+    try:
+        fd = os.open(sf, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError:
         raise FileExistsError(f"sandbox already exists: {name}")
 
     run = runner or _default_runner
-    cmd = ["podman", "run", "-d", "--name", name, image, "sleep", "infinity"]
-    result = run(cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"podman run failed (exit {result.returncode}): {result.stderr.strip()}"
-        )
-    container_id = (result.stdout or "").strip().splitlines()[-1] if result.stdout else ""
-    if not container_id:
-        raise RuntimeError("podman run produced no container id")
-
-    units = snapshot_units(host=source_host, runner=runner)
-    packages = snapshot_packages(host=source_host, runner=runner)
-
-    sandbox = Sandbox(
-        name=name,
-        container_id=container_id,
-        image=image,
-        source_host=source_host,
-        created_at=time.time(),
-        units_snapshot=units,
-        packages_snapshot=packages,
+    isolation = [] if unsafe else _isolation_args()
+    cmd = (
+        ["podman", "run", "-d", "--name", name]
+        + isolation
+        + [image, "sleep", "infinity"]
     )
+    container_id: str | None = None
+    try:
+        result = run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"podman run failed (exit {result.returncode}): {result.stderr.strip()}"
+            )
+        container_id = (result.stdout or "").strip().splitlines()[-1] if result.stdout else ""
+        if not container_id:
+            raise RuntimeError("podman run produced no container id")
 
-    sf.parent.mkdir(parents=True, exist_ok=True)
-    sf.write_text(json.dumps(sandbox.to_dict(), indent=2, sort_keys=True))
-    return sandbox
+        units = snapshot_units(host=source_host, runner=runner)
+        packages = snapshot_packages(host=source_host, runner=runner)
+
+        sandbox = Sandbox(
+            name=name,
+            container_id=container_id,
+            image=image,
+            source_host=source_host,
+            created_at=time.time(),
+            units_snapshot=units,
+            packages_snapshot=packages,
+        )
+        os.write(fd, json.dumps(sandbox.to_dict(), indent=2, sort_keys=True).encode())
+    except BaseException:
+        # Partial-failure cleanup: if podman did spawn a container but the
+        # state write or snapshotting blew up, remove the container so the
+        # operator isn't left chasing orphans.
+        if container_id:
+            try:
+                run(
+                    ["podman", "rm", "-f", container_id],
+                    capture_output=True, text=True,
+                )
+            except Exception:
+                pass
+        try:
+            os.close(fd)
+        finally:
+            sf.unlink(missing_ok=True)
+        raise
+    else:
+        os.close(fd)
+        return sandbox
 
 
 def load_sandbox(name: str) -> Sandbox:

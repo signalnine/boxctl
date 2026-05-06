@@ -18,6 +18,8 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -27,6 +29,8 @@ from urllib.parse import urlsplit
 
 import yaml
 
+from boxctl.core.sandbox import _NAME_RE as _SANDBOX_NAME_RE
+from boxctl.core.sandbox import validate_image_ref
 from boxctl.core.ssh import load_hosts
 
 
@@ -94,6 +98,39 @@ def role_allows(role: str | None, action: str) -> bool:
     return ROLE_RANK[role] >= needed
 
 
+DEFAULT_AUTH_RATE_LIMIT = 10
+DEFAULT_AUTH_RATE_WINDOW = 60
+
+
+class RateLimiter:
+    """Sliding-window failure counter keyed by a string (typically client IP).
+
+    Used to throttle bearer-token brute-force attempts (gap analysis P1 #7).
+    Only failed auths feed the counter; successful requests don't consume
+    quota, so a busy legitimate client can't accidentally lock itself out.
+    """
+
+    def __init__(self, max_attempts: int = DEFAULT_AUTH_RATE_LIMIT,
+                 window_seconds: float = DEFAULT_AUTH_RATE_WINDOW):
+        self.max_attempts = max_attempts
+        self.window_seconds = window_seconds
+        self._buckets: dict[str, deque[float]] = {}
+        self._lock = threading.Lock()
+
+    def allow(self, key: str) -> bool:
+        now = time.monotonic()
+        cutoff = now - self.window_seconds
+        with self._lock:
+            bucket = self._buckets.setdefault(key, deque())
+            # Drop entries older than the sliding window.
+            while bucket and bucket[0] < cutoff:
+                bucket.popleft()
+            if len(bucket) >= self.max_attempts:
+                return False
+            bucket.append(now)
+            return True
+
+
 SandboxSpawn = Callable[[str, str, str | None], dict[str, Any]]
 
 
@@ -112,6 +149,7 @@ class DaemonState:
     runs_log_path: Path
     access_log_path: Path
     sandbox_spawn: SandboxSpawn
+    rate_limiter: RateLimiter = field(default_factory=RateLimiter)
     _log_lock: threading.Lock = field(default_factory=threading.Lock)
 
 
@@ -215,25 +253,35 @@ def make_handler(state: DaemonState) -> type[BaseHTTPRequestHandler]:
             except OSError:
                 pass
 
+        def _client_key(self) -> str:
+            return self.client_address[0] if self.client_address else "unknown"
+
         def _handle(self, method: str, body: bytes | None = None) -> None:
-            # Strip query string and normalize trailing slash so
-            # /hosts?limit=10 and /hosts/ both reach the right handler
-            # (issue boxctl-wux). The access log still records the raw
-            # path the client sent.
-            raw_path = self.path
-            route = urlsplit(raw_path).path
+            # Normalize the path once: strip query string (so /hosts?x=y
+            # routes correctly -- issue boxctl-wux) and trim a trailing
+            # slash. The access log records the path WITHOUT the query
+            # string, since clients sometimes pass secrets that way and
+            # we don't want them landing in daemon.jsonl
+            # (gap analysis P1 #6).
+            route = urlsplit(self.path).path
             if len(route) > 1 and route.endswith("/"):
                 route = route.rstrip("/")
             token, role = self._auth()
 
-            if token is None:
-                self._send_status(401, "missing or malformed Authorization header")
-                self._log(401, method, raw_path, token, role)
-                return
-
-            if role is None:
-                self._send_status(403, "unknown token")
-                self._log(403, method, raw_path, token, role)
+            if token is None or role is None:
+                # Failed-auth attempts feed the rate limiter so an IP that
+                # spams bad tokens eventually gets 429'd
+                # (gap analysis P1 #7).
+                if not state.rate_limiter.allow(self._client_key()):
+                    self._send_status(429, "too many failed auth attempts")
+                    self._log(429, method, route, token, role)
+                    return
+                if token is None:
+                    self._send_status(401, "missing or malformed Authorization header")
+                    self._log(401, method, route, token, role)
+                else:
+                    self._send_status(403, "unknown token")
+                    self._log(403, method, route, token, role)
                 return
 
             try:
@@ -242,7 +290,7 @@ def make_handler(state: DaemonState) -> type[BaseHTTPRequestHandler]:
                 self._send_status(e.status, e.message)
                 status = e.status
 
-            self._log(status, method, raw_path, token, role)
+            self._log(status, method, route, token, role)
 
         def _dispatch(self, method: str, path: str, role: str, body: bytes | None) -> int:
             if method == "GET" and path == "/hosts":
@@ -276,6 +324,20 @@ def make_handler(state: DaemonState) -> type[BaseHTTPRequestHandler]:
                 source_host = payload.get("source_host")
                 if not isinstance(name, str) or not name:
                     raise _HTTPError(400, "name is required")
+                # Validate name at the daemon boundary (defense in depth).
+                # The spawn callable will revalidate; the daemon also
+                # rejects up front so test harnesses that inject a fake
+                # spawn don't bypass the gate.
+                if not _SANDBOX_NAME_RE.match(name):
+                    raise _HTTPError(400, f"invalid sandbox name: {name!r}")
+                if not isinstance(image, str):
+                    raise _HTTPError(400, "image must be a string")
+                try:
+                    validate_image_ref(image)
+                except ValueError as e:
+                    raise _HTTPError(400, str(e))
+                if source_host is not None and not isinstance(source_host, str):
+                    raise _HTTPError(400, "source_host must be a string or null")
                 try:
                     sandbox = state.sandbox_spawn(name, image, source_host)
                 except (FileExistsError, ValueError, RuntimeError) as e:

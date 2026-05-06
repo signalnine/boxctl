@@ -19,6 +19,8 @@ Design choices:
 from __future__ import annotations
 
 import getpass
+import hashlib
+import hmac
 import json
 import os
 import sys
@@ -27,6 +29,32 @@ from pathlib import Path
 from typing import Any, TextIO
 
 import yaml
+
+
+_SIG_FIELD = "sig"
+
+
+def _audit_key() -> bytes | None:
+    """Return the HMAC key bytes if BOXCTL_AUDIT_KEY is set, else None."""
+    raw = os.environ.get("BOXCTL_AUDIT_KEY")
+    if not raw:
+        return None
+    return raw.encode("utf-8")
+
+
+def _entry_payload(entry: dict[str, Any]) -> bytes:
+    """Canonical JSON representation of an entry minus its signature.
+
+    Sorted keys keep the encoding stable across Python versions and platforms;
+    without that, two JSON encoders that emit fields in different orders
+    would produce different MACs.
+    """
+    payload = {k: v for k, v in entry.items() if k != _SIG_FIELD}
+    return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _sign(entry: dict[str, Any], key: bytes) -> str:
+    return hmac.new(key, _entry_payload(entry), hashlib.sha256).hexdigest()
 
 
 _RESET = "\x1b[0m"
@@ -227,17 +255,92 @@ def log_decision(
     decision: str,
     summary: dict[str, Any],
     log_path: Path | None = None,
+    playbook_hash: str | None = None,
 ) -> Path:
-    """Append a decision record to the audit log. Returns the path written to."""
+    """Append a decision record to the audit log. Returns the path written to.
+
+    When ``BOXCTL_AUDIT_KEY`` is set, the entry is HMAC-SHA256 signed under
+    that key (gap analysis P0 #1) so a forged "approved" line stuck into the
+    log file by anyone with write access is detectable via
+    ``verify_audit_log``. When the key is unset, entries are written unsigned
+    so existing logs (and dev workflows that don't care about integrity)
+    keep working.
+
+    ``playbook_hash`` is recorded alongside the path so a swap-after-display
+    attack (P0 #2) can't make the audit record describe content the operator
+    didn't actually see.
+    """
     target = log_path if log_path is not None else default_audit_log_path()
+    # Refuse to follow symlinks -- writing to /etc/hostname via a symlink
+    # named audit.jsonl is a real risk in any shared-state-dir setup.
+    if target.is_symlink():
+        raise PermissionError(f"refusing to write audit log via symlink: {target}")
     target.parent.mkdir(parents=True, exist_ok=True)
-    entry = {
+    entry: dict[str, Any] = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "user": _current_user(),
         "playbook": playbook_path,
         "decision": decision,
         "task_count": len(summary.get("tasks") or []),
     }
+    if playbook_hash:
+        entry["playbook_hash"] = playbook_hash
+    key = _audit_key()
+    if key is not None:
+        entry[_SIG_FIELD] = _sign(entry, key)
     with open(target, "a") as f:
         f.write(json.dumps(entry) + "\n")
     return target
+
+
+def verify_audit_log(path: Path) -> dict[str, Any]:
+    """Walk the audit log, classify each line as valid/invalid/unsigned.
+
+    Returns ``{"valid": int, "invalid": [line_no...], "unsigned": int,
+    "malformed": [line_no...]}``. Verification requires
+    ``BOXCTL_AUDIT_KEY`` to be set (mirroring how ``log_decision`` signs
+    only when a key is available). Lines without a ``sig`` field count as
+    unsigned -- pre-HMAC rollouts kept readable, but a security tool can
+    flag them.
+    """
+    key = _audit_key()
+    if key is None:
+        raise RuntimeError(
+            "BOXCTL_AUDIT_KEY must be set to verify audit log integrity"
+        )
+    valid = 0
+    unsigned = 0
+    invalid: list[int] = []
+    malformed: list[int] = []
+    if not Path(path).exists():
+        return {"valid": 0, "invalid": [], "unsigned": 0, "malformed": []}
+    with open(path) as f:
+        for lineno, raw in enumerate(f, start=1):
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                entry = json.loads(raw)
+            except json.JSONDecodeError:
+                malformed.append(lineno)
+                continue
+            if not isinstance(entry, dict):
+                malformed.append(lineno)
+                continue
+            sig = entry.get(_SIG_FIELD)
+            if sig is None:
+                unsigned += 1
+                continue
+            expected = _sign(entry, key)
+            # Constant-time compare keeps the verifier from leaking
+            # signature bytes through timing.
+            if hmac.compare_digest(expected, sig):
+                valid += 1
+            else:
+                invalid.append(lineno)
+    return {
+        "valid": valid,
+        "invalid": invalid,
+        "unsigned": unsigned,
+        "malformed": malformed,
+    }

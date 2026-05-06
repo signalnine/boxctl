@@ -121,6 +121,42 @@ class TestLoadHosts:
         assert inv.hosts == {}
         assert inv.groups == {}
 
+    def test_warns_when_version_missing(self, tmp_path):
+        """Old inventories that predate the version key should still load
+        but emit a warning so schema drift gets noticed (gap analysis P2 #16)."""
+        import io
+
+        p = tmp_path / "hosts.yml"
+        p.write_text("hosts:\n  a:\n    host: 1.2.3.4\n")
+        ws = io.StringIO()
+        inv = load_hosts(p, warn_stream=ws)
+        assert "a" in inv.hosts
+        assert "no `version:` key" in ws.getvalue()
+
+    def test_warns_on_major_mismatch(self, tmp_path):
+        import io
+
+        p = tmp_path / "hosts.yml"
+        p.write_text("version: 99\nhosts:\n  a:\n    host: 1.2.3.4\n")
+        ws = io.StringIO()
+        load_hosts(p, warn_stream=ws)
+        assert "expects v" in ws.getvalue()
+        assert "99" in ws.getvalue()
+
+    def test_quiet_when_version_matches(self, tmp_path):
+        import io
+
+        from boxctl.core.ssh import INVENTORY_SCHEMA_VERSION
+
+        p = tmp_path / "hosts.yml"
+        p.write_text(
+            f"version: {INVENTORY_SCHEMA_VERSION}\n"
+            "hosts:\n  a:\n    host: 1.2.3.4\n"
+        )
+        ws = io.StringIO()
+        load_hosts(p, warn_stream=ws)
+        assert ws.getvalue() == ""
+
 
 class TestResolveTargets:
     def test_single_name(self, inventory_file):

@@ -179,6 +179,111 @@ def test_apply_appends_multiple_decisions(playbook_file, audit_log):
         assert json.loads(line)["decision"] == "approved"
 
 
+def test_apply_logs_playbook_hash(playbook_file, audit_log):
+    """The audit entry must include the SHA256 of the displayed bytes so a
+    swap-after-display can be detected (gap analysis P0 #2)."""
+    import hashlib
+
+    main([
+        "apply",
+        str(playbook_file),
+        "--yes",
+        "--no-color",
+        "--audit-log", str(audit_log),
+    ])
+    entry = json.loads(audit_log.read_text().splitlines()[0])
+    expected = hashlib.sha256(playbook_file.read_bytes()).hexdigest()
+    assert entry["playbook_hash"] == expected
+
+
+def test_apply_prints_hash_before_prompt(playbook_file, audit_log, capsys):
+    main([
+        "apply",
+        str(playbook_file),
+        "--yes",
+        "--no-color",
+        "--audit-log", str(audit_log),
+    ])
+    out = capsys.readouterr().out
+    assert "sha256:" in out
+    # Hash precedes the playbook block so the operator sees it during review.
+    assert out.index("sha256:") < out.index("--- playbook ---")
+
+
+def test_apply_redacts_secrets_in_displayed_playbook(tmp_path, capsys):
+    """Secrets embedded in playbook content must be redacted before display
+    so capturing CI logs don't store them (gap analysis P1 #9). The audit
+    record still references the on-disk file by hash."""
+    pb = tmp_path / "leaky.yml"
+    pb.write_text(
+        "- name: leak\n"
+        "  hosts: all\n"
+        "  tasks:\n"
+        "    - name: bad copy\n"
+        "      ansible.builtin.copy:\n"
+        "        dest: /etc/secret\n"
+        "        content: \"AKIAIOSFODNN7EXAMPLE\"\n"
+    )
+    audit = tmp_path / "audit.jsonl"
+    main([
+        "apply", str(pb), "--yes", "--no-color", "--audit-log", str(audit),
+    ])
+    out = capsys.readouterr().out
+    assert "AKIAIOSFODNN7EXAMPLE" not in out
+    assert "[REDACTED:aws-key]" in out
+
+
+def test_apply_refuses_symlink_playbook(tmp_path, capsys):
+    real = tmp_path / "real.yml"
+    real.write_text(SAMPLE_PLAYBOOK)
+    link = tmp_path / "link.yml"
+    link.symlink_to(real)
+    rc = main([
+        "apply",
+        str(link),
+        "--yes",
+        "--no-color",
+        "--audit-log", str(tmp_path / "audit.jsonl"),
+    ])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "symlink" in err.lower()
+
+
+def test_apply_refuses_symlink_audit_log(tmp_path, playbook_file, capsys):
+    """audit log must not be written through a symlink -- otherwise
+    `boxctl apply --audit-log /etc/hostname` (via a symlink in tmp_path)
+    appends JSON to a system file (gap analysis P0 #3)."""
+    real = tmp_path / "actually_audit.jsonl"
+    real.write_text("")
+    link = tmp_path / "audit.jsonl"
+    link.symlink_to(real)
+    rc = main([
+        "apply",
+        str(playbook_file),
+        "--yes",
+        "--no-color",
+        "--audit-log", str(link),
+    ])
+    assert rc == 2
+    assert "symlink" in capsys.readouterr().err.lower()
+
+
+def test_apply_signs_log_when_audit_key_set(playbook_file, audit_log, monkeypatch):
+    monkeypatch.setenv("BOXCTL_AUDIT_KEY", "k1")
+    rc = main([
+        "apply",
+        str(playbook_file),
+        "--yes",
+        "--no-color",
+        "--audit-log", str(audit_log),
+    ])
+    assert rc == 0
+    entry = json.loads(audit_log.read_text().splitlines()[0])
+    assert "sig" in entry
+    assert len(entry["sig"]) == 64
+
+
 def test_apply_help_lists_command():
     """`boxctl apply --help` works without error."""
     proc = subprocess.run(

@@ -10,11 +10,18 @@ from __future__ import annotations
 import getpass
 import shlex
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
 import yaml
+
+
+# Inventory schema version. Bump the major component when the schema
+# changes incompatibly so older configs warn instead of silently behaving
+# differently (gap analysis P2 #16).
+INVENTORY_SCHEMA_VERSION = 1
 
 
 @dataclass
@@ -32,12 +39,38 @@ class Inventory:
     groups: dict[str, list[str]] = field(default_factory=dict)
 
 
-def load_hosts(path: Path | str) -> Inventory:
-    """Parse YAML inventory; a missing file yields an empty Inventory."""
+def load_hosts(path: Path | str, warn_stream: Any | None = None) -> Inventory:
+    """Parse YAML inventory; a missing file yields an empty Inventory.
+
+    If the file lacks a ``version:`` key, or declares a version with a
+    different major than the framework expects, write a one-line warning
+    to ``warn_stream`` (defaults to ``sys.stderr``). Loading still
+    proceeds -- the goal is to flag schema drift early, not break setups.
+    """
     p = Path(path)
     if not p.exists():
         return Inventory()
     raw = yaml.safe_load(p.read_text()) or {}
+    if isinstance(raw, dict):
+        version = raw.get("version")
+        ws = warn_stream if warn_stream is not None else sys.stderr
+        if version is None:
+            print(
+                f"warning: inventory {p} has no `version:` key; "
+                f"current schema is v{INVENTORY_SCHEMA_VERSION}",
+                file=ws,
+            )
+        else:
+            try:
+                major = int(str(version).split(".", 1)[0])
+            except ValueError:
+                major = -1
+            if major != INVENTORY_SCHEMA_VERSION:
+                print(
+                    f"warning: inventory {p} declares version {version!r}; "
+                    f"this boxctl expects v{INVENTORY_SCHEMA_VERSION}",
+                    file=ws,
+                )
     hosts = {}
     for name, spec in (raw.get("hosts") or {}).items():
         spec = spec or {}

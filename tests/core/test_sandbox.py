@@ -137,6 +137,71 @@ def test_create_sandbox_invokes_podman_run_with_correct_argv(state_dir, good_run
     assert run_call[-2:] == ["sleep", "infinity"]
 
 
+class TestSandboxSafeDefaults:
+    """Sandbox containers must spawn with safe-by-default isolation flags
+    so a misbehaving experiment can't reach the host network or escalate
+    via Linux capabilities (gap analysis P0 #4)."""
+
+    def test_default_flags_drop_caps_and_disable_network(self, state_dir, good_runner):
+        sb.create_sandbox("safe", image="debian:stable", runner=good_runner)
+        run_call = next(c for c in good_runner.calls if c[:2] == ["podman", "run"])
+        assert "--network=none" in run_call
+        assert "--cap-drop=ALL" in run_call
+        assert "--security-opt=no-new-privileges" in run_call
+        assert "--read-only" in run_call
+        # tmpfs lets package installs / writes proceed without exposing host paths.
+        assert any(a.startswith("--tmpfs=/tmp") for a in run_call)
+        # Resource limits prevent runaway sandboxes from hosing the host.
+        assert any(a.startswith("--memory=") for a in run_call)
+        assert any(a.startswith("--pids-limit=") for a in run_call)
+
+    def test_unsafe_flag_omits_isolation(self, state_dir, good_runner):
+        """Operators sometimes legitimately need network or caps -- e.g.
+        validating that an apt install would actually work. The opt-out
+        keeps the door open without changing the default."""
+        sb.create_sandbox(
+            "loose", image="debian:stable", runner=good_runner, unsafe=True,
+        )
+        run_call = next(c for c in good_runner.calls if c[:2] == ["podman", "run"])
+        assert "--network=none" not in run_call
+        assert "--cap-drop=ALL" not in run_call
+
+
+class TestImageValidation:
+    """Image references reach create_sandbox from the daemon's /sandbox
+    POST body, so they must be validated before podman pull (gap analysis
+    P0 #5 + P1 #8)."""
+
+    @pytest.mark.parametrize("good", [
+        "debian:stable",
+        "docker.io/library/debian:stable",
+        "ghcr.io/foo/bar:1.2.3",
+        "quay.io/coreos/etcd@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+        "registry.example.com:5000/team/img:tag",
+    ])
+    def test_valid_image_refs_accepted(self, good):
+        # Direct test of the validator -- doesn't need a runner.
+        sb.validate_image_ref(good)
+
+    @pytest.mark.parametrize("bad", [
+        "",
+        "   ",
+        "image with space:tag",
+        "img;rm -rf /",
+        "img\nls",
+        "x" * 600,  # absurd length
+        "img:bad tag",
+        "$injection:tag",
+    ])
+    def test_invalid_image_refs_rejected(self, bad):
+        with pytest.raises(ValueError):
+            sb.validate_image_ref(bad)
+
+    def test_create_sandbox_rejects_bad_image(self, state_dir, good_runner):
+        with pytest.raises(ValueError, match="image"):
+            sb.create_sandbox("bad", image="img;rm -rf /", runner=good_runner)
+
+
 @pytest.mark.parametrize("bad", ["", "has space", "with/slash", "a" * 65, "weird;name", ".dot"])
 def test_create_sandbox_rejects_invalid_names(state_dir, good_runner, bad):
     with pytest.raises(ValueError):

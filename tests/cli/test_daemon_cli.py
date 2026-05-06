@@ -80,3 +80,82 @@ def test_daemon_serve_starts_server_and_stops_on_signal(tmp_path, monkeypatch, c
     daemon_mod._stop_running_server()
     th.join(timeout=5)
     assert holder.get("rc") == 0
+
+
+def test_daemon_serve_warns_on_non_loopback_bind(tmp_path, monkeypatch, capsys):
+    """Binding to non-loopback exposes the daemon to anyone on the
+    network -- the operator deserves a clear stderr warning before that
+    happens (gap analysis P2 #17)."""
+    inventory = tmp_path / "hosts.yml"
+    inventory.write_text("hosts: {}\n")
+    config = tmp_path / "daemon.yml"
+    config.write_text("tokens:\n  s: reader\n")
+
+    monkeypatch.setenv("BOXCTL_DAEMON_LOG", str(tmp_path / "d.jsonl"))
+    monkeypatch.setenv("BOXCTL_RUNS_LOG", str(tmp_path / "r.jsonl"))
+    monkeypatch.setenv("BOXCTL_AUDIT_LOG", str(tmp_path / "a.jsonl"))
+
+    holder: dict = {}
+
+    def runner():
+        holder["rc"] = main([
+            "daemon", "serve",
+            "--bind", "0.0.0.0",
+            "--port", "0",
+            "--config", str(config),
+            "--inventory", str(inventory),
+        ])
+
+    th = threading.Thread(target=runner, daemon=True)
+    th.start()
+
+    # Wait for the server to bind, then shut down.
+    from boxctl.core import daemon as daemon_mod
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        if daemon_mod._LAST_SERVER is not None:
+            break
+        time.sleep(0.05)
+    daemon_mod._stop_running_server()
+    th.join(timeout=5)
+
+    err = capsys.readouterr().err
+    assert "non-loopback" in err
+    assert "0.0.0.0" in err
+
+
+def test_daemon_serve_quiet_on_loopback_bind(tmp_path, monkeypatch, capsys):
+    inventory = tmp_path / "hosts.yml"
+    inventory.write_text("hosts: {}\n")
+    config = tmp_path / "daemon.yml"
+    config.write_text("tokens:\n  s: reader\n")
+
+    monkeypatch.setenv("BOXCTL_DAEMON_LOG", str(tmp_path / "d.jsonl"))
+    monkeypatch.setenv("BOXCTL_RUNS_LOG", str(tmp_path / "r.jsonl"))
+    monkeypatch.setenv("BOXCTL_AUDIT_LOG", str(tmp_path / "a.jsonl"))
+
+    holder: dict = {}
+
+    def runner():
+        holder["rc"] = main([
+            "daemon", "serve",
+            "--bind", "127.0.0.1",
+            "--port", "0",
+            "--config", str(config),
+            "--inventory", str(inventory),
+        ])
+
+    th = threading.Thread(target=runner, daemon=True)
+    th.start()
+
+    from boxctl.core import daemon as daemon_mod
+    deadline = time.time() + 5
+    while time.time() < deadline:
+        if daemon_mod._LAST_SERVER is not None:
+            break
+        time.sleep(0.05)
+    daemon_mod._stop_running_server()
+    th.join(timeout=5)
+
+    err = capsys.readouterr().err
+    assert "non-loopback" not in err

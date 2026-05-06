@@ -297,6 +297,116 @@ def test_log_decision_creates_parent_dir(tmp_path):
     assert log.exists()
 
 
+class TestSignedAuditLog:
+    """Audit log entries must be HMAC-signed when BOXCTL_AUDIT_KEY is set, so
+    a forged 'approved' line stuck into ~/.local/state/boxctl/audit.jsonl is
+    detectable. Without a key, entries fall back to legacy unsigned mode so
+    existing logs remain readable (gap analysis P0 #1)."""
+
+    def test_log_decision_signs_when_key_set(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("BOXCTL_AUDIT_KEY", "supersecret")
+        log = tmp_path / "audit.jsonl"
+        approval.log_decision(
+            playbook_path="/tmp/p.yml",
+            decision="approved",
+            summary={"tasks": [], "errors": []},
+            log_path=log,
+        )
+        entry = json.loads(log.read_text().splitlines()[0])
+        assert "sig" in entry
+        # Signature is hex-encoded HMAC-SHA256 -> 64 chars.
+        assert len(entry["sig"]) == 64
+        all(c in "0123456789abcdef" for c in entry["sig"])
+
+    def test_log_decision_no_signature_without_key(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("BOXCTL_AUDIT_KEY", raising=False)
+        log = tmp_path / "audit.jsonl"
+        approval.log_decision(
+            playbook_path="/tmp/p.yml",
+            decision="approved",
+            summary={"tasks": [], "errors": []},
+            log_path=log,
+        )
+        entry = json.loads(log.read_text().splitlines()[0])
+        assert "sig" not in entry
+
+    def test_verify_audit_log_passes_for_valid_entries(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("BOXCTL_AUDIT_KEY", "k1")
+        log = tmp_path / "audit.jsonl"
+        approval.log_decision(
+            playbook_path="a", decision="approved",
+            summary={"tasks": [], "errors": []}, log_path=log,
+        )
+        approval.log_decision(
+            playbook_path="b", decision="rejected",
+            summary={"tasks": [], "errors": []}, log_path=log,
+        )
+        result = approval.verify_audit_log(log)
+        assert result["valid"] == 2
+        assert result["invalid"] == []
+        assert result["unsigned"] == 0
+
+    def test_verify_audit_log_detects_tamper(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("BOXCTL_AUDIT_KEY", "k1")
+        log = tmp_path / "audit.jsonl"
+        approval.log_decision(
+            playbook_path="a", decision="approved",
+            summary={"tasks": [], "errors": []}, log_path=log,
+        )
+        # Tamper: flip the decision from approved to rejected without re-signing.
+        line = log.read_text().splitlines()[0]
+        entry = json.loads(line)
+        entry["decision"] = "rejected"
+        log.write_text(json.dumps(entry) + "\n")
+
+        result = approval.verify_audit_log(log)
+        assert result["valid"] == 0
+        assert len(result["invalid"]) == 1
+
+    def test_verify_audit_log_detects_forged_entry(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("BOXCTL_AUDIT_KEY", "k1")
+        log = tmp_path / "audit.jsonl"
+        approval.log_decision(
+            playbook_path="real", decision="approved",
+            summary={"tasks": [], "errors": []}, log_path=log,
+        )
+        # An attacker appends a fake "approved" line they crafted by hand.
+        with open(log, "a") as f:
+            f.write(json.dumps({
+                "timestamp": "2099-01-01T00:00:00+00:00",
+                "user": "attacker",
+                "playbook": "/etc/shadow",
+                "decision": "approved",
+                "task_count": 0,
+                "sig": "00" * 32,
+            }) + "\n")
+
+        result = approval.verify_audit_log(log)
+        assert result["valid"] == 1
+        assert len(result["invalid"]) == 1
+
+    def test_verify_audit_log_reports_unsigned_entries(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("BOXCTL_AUDIT_KEY", "k1")
+        log = tmp_path / "audit.jsonl"
+        # Pre-existing unsigned line from before HMAC was rolled out.
+        log.write_text(json.dumps({
+            "timestamp": "2025-01-01T00:00:00+00:00",
+            "user": "alice",
+            "playbook": "p",
+            "decision": "approved",
+            "task_count": 0,
+        }) + "\n")
+        approval.log_decision(
+            playbook_path="b", decision="approved",
+            summary={"tasks": [], "errors": []}, log_path=log,
+        )
+
+        result = approval.verify_audit_log(log)
+        assert result["valid"] == 1
+        assert result["unsigned"] == 1
+        assert result["invalid"] == []
+
+
 def test_log_decision_records_task_count(tmp_path):
     log = tmp_path / "audit.jsonl"
     summary = {
