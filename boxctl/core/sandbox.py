@@ -294,6 +294,7 @@ def create_sandbox(
 
 
 def load_sandbox(name: str) -> Sandbox:
+    _validate_name(name)
     sf = _state_file(name)
     if not sf.exists():
         raise FileNotFoundError(f"no such sandbox: {name}")
@@ -334,6 +335,7 @@ def _diff_units(before: list[str], after: list[str]) -> dict[str, list[str]]:
 
 def diff_sandbox(name: str, runner: Runner | None = None) -> dict[str, Any]:
     """Compute filesystem + unit-state diffs against the recorded snapshot."""
+    _validate_name(name)
     sandbox = load_sandbox(name)
     run = runner or _default_runner
 
@@ -398,6 +400,7 @@ def destroy_sandbox(name: str, runner: Runner | None = None) -> None:
     (typically because the container is already gone) we still remove the
     local state file so the operator is not left with orphaned bookkeeping.
     """
+    _validate_name(name)
     sandbox = load_sandbox(name)
     run = runner or _default_runner
     try:

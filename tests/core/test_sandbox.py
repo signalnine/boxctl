@@ -229,6 +229,39 @@ def test_load_sandbox_missing_raises(state_dir):
         sb.load_sandbox("nope")
 
 
+@pytest.mark.parametrize("bad", ["..", "../pwned", "/etc/passwd", "foo/bar", "", "has space"])
+def test_load_sandbox_rejects_invalid_names(state_dir, bad):
+    with pytest.raises(ValueError):
+        sb.load_sandbox(bad)
+
+
+@pytest.mark.parametrize("bad", ["..", "../pwned", "/etc/passwd", "foo/bar", "", "has space"])
+def test_destroy_sandbox_rejects_invalid_names(state_dir, bad):
+    with pytest.raises(ValueError):
+        sb.destroy_sandbox(bad, runner=FakeRunner())
+
+
+@pytest.mark.parametrize("bad", ["..", "../pwned", "/etc/passwd", "foo/bar", "", "has space"])
+def test_diff_sandbox_rejects_invalid_names(state_dir, bad):
+    with pytest.raises(ValueError):
+        sb.diff_sandbox(bad, runner=FakeRunner())
+
+
+def test_load_sandbox_path_traversal_blocked(state_dir, tmp_path):
+    """Reproducer from boxctl-x3r: a state file written outside the
+    configured state_dir via '..' must not be reachable through
+    load_sandbox. Validation rejects the name before any file lookup."""
+    outside = tmp_path / "pwned.json"
+    outside.write_text(json.dumps({
+        "name": "x", "container_id": "c", "image": "i",
+        "source_host": None, "created_at": 1.0,
+        "units_snapshot": [], "packages_snapshot": [],
+    }))
+    with pytest.raises(ValueError):
+        sb.load_sandbox("../pwned")
+    assert outside.exists()
+
+
 def test_list_sandboxes_empty_when_dir_missing(state_dir):
     assert sb.list_sandboxes() == []
 
