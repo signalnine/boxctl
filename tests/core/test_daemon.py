@@ -271,6 +271,10 @@ def test_access_log_strips_query_string(daemon_env):
         server, "GET", "/hosts?api_key=secret-do-not-log",
         headers={"Authorization": "Bearer reader-tok"},
     )
+    for _ in range(20):
+        if state.access_log_path.exists() and state.access_log_path.stat().st_size > 0:
+            break
+        time.sleep(0.05)
     log_text = state.access_log_path.read_text()
     assert "secret-do-not-log" not in log_text
     assert "api_key" not in log_text
