@@ -2,6 +2,7 @@
 
 import os
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -68,7 +69,7 @@ def run_script(
     Returns:
         ScriptResult with output and exit code
     """
-    cmd = ["python3", str(script_path)]
+    cmd = [sys.executable, str(script_path)]
     if args:
         cmd.extend(args)
 

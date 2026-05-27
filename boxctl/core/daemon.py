@@ -225,6 +225,7 @@ def make_handler(state: DaemonState) -> type[BaseHTTPRequestHandler]:
 
         def _send_json(self, status: int, payload: Any) -> None:
             body = json.dumps(payload).encode()
+            self._log_current(status)
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
@@ -233,6 +234,7 @@ def make_handler(state: DaemonState) -> type[BaseHTTPRequestHandler]:
 
         def _send_status(self, status: int, msg: str) -> None:
             body = json.dumps({"error": msg}).encode()
+            self._log_current(status)
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
@@ -253,6 +255,20 @@ def make_handler(state: DaemonState) -> type[BaseHTTPRequestHandler]:
             except OSError:
                 pass
 
+        def _set_log_context(self, method: str, path: str, token: str | None, role: str | None) -> None:
+            self._boxctl_log_context = (method, path, token, role)
+            self._boxctl_logged = False
+
+        def _log_current(self, status: int) -> None:
+            if getattr(self, "_boxctl_logged", False):
+                return
+            context = getattr(self, "_boxctl_log_context", None)
+            if context is None:
+                return
+            method, path, token, role = context
+            self._boxctl_logged = True
+            self._log(status, method, path, token, role)
+
         def _client_key(self) -> str:
             return self.client_address[0] if self.client_address else "unknown"
 
@@ -267,6 +283,7 @@ def make_handler(state: DaemonState) -> type[BaseHTTPRequestHandler]:
             if len(route) > 1 and route.endswith("/"):
                 route = route.rstrip("/")
             token, role = self._auth()
+            self._set_log_context(method, route, token, role)
 
             if token is None or role is None:
                 # Failed-auth attempts feed the rate limiter so an IP that
@@ -274,38 +291,35 @@ def make_handler(state: DaemonState) -> type[BaseHTTPRequestHandler]:
                 # (gap analysis P1 #7).
                 if not state.rate_limiter.allow(self._client_key()):
                     self._send_status(429, "too many failed auth attempts")
-                    self._log(429, method, route, token, role)
                     return
                 if token is None:
                     self._send_status(401, "missing or malformed Authorization header")
-                    self._log(401, method, route, token, role)
                 else:
                     self._send_status(403, "unknown token")
-                    self._log(403, method, route, token, role)
                 return
 
             try:
-                status = self._dispatch(method, route, role, body)
+                self._dispatch(method, route, role, body)
             except _HTTPError as e:
                 self._send_status(e.status, e.message)
-                status = e.status
-
-            self._log(status, method, route, token, role)
 
         def _dispatch(self, method: str, path: str, role: str, body: bytes | None) -> int:
             if method == "GET" and path == "/hosts":
                 if not role_allows(role, "read"):
                     raise _HTTPError(403, "forbidden")
+                self._log_current(200)
                 self._send_json(200, _list_hosts(state))
                 return 200
             if method == "GET" and path == "/runs":
                 if not role_allows(role, "read"):
                     raise _HTTPError(403, "forbidden")
+                self._log_current(200)
                 self._send_json(200, _read_jsonl(state.runs_log_path))
                 return 200
             if method == "GET" and path == "/approvals":
                 if not role_allows(role, "read"):
                     raise _HTTPError(403, "forbidden")
+                self._log_current(200)
                 self._send_json(200, _read_jsonl(state.approvals_log_path))
                 return 200
             if method == "POST" and path == "/sandbox":
@@ -350,6 +364,7 @@ def make_handler(state: DaemonState) -> type[BaseHTTPRequestHandler]:
                     "source_host": source_host,
                     "role": role,
                 })
+                self._log_current(201)
                 self._send_json(201, sandbox)
                 return 201
             raise _HTTPError(404, "not found")

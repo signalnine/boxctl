@@ -282,6 +282,44 @@ def test_access_log_strips_query_string(daemon_env):
     assert any(json.loads(ln)["path"] == "/hosts" for ln in log_text.splitlines() if ln)
 
 
+def test_access_log_written_before_response_body(daemon_env):
+    """A client that has received the response body should also see the access log."""
+    server, state, _spawn = daemon_env
+    server.shutdown()
+    server.server_close()
+
+    handler_cls = daemon.make_handler(state)
+    orig_send_json = handler_cls._send_json
+    logged_before_body = []
+
+    def recording_send_json(self, status, payload):
+        if state.access_log_path.exists():
+            log_text = state.access_log_path.read_text()
+            logged_before_body.append(
+                any(json.loads(ln)["path"] == "/hosts" for ln in log_text.splitlines() if ln)
+            )
+        else:
+            logged_before_body.append(False)
+        return orig_send_json(self, status, payload)
+
+    handler_cls._send_json = recording_send_json
+    patched_server = daemon.ThreadingHTTPServer(("127.0.0.1", 0), handler_cls)
+    thread = threading.Thread(target=patched_server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        status, _ = _request(
+            patched_server, "GET", "/hosts",
+            headers={"Authorization": "Bearer reader-tok"},
+        )
+        assert status == 200
+    finally:
+        patched_server.shutdown()
+        patched_server.server_close()
+        thread.join(timeout=2)
+
+    assert logged_before_body == [True]
+
+
 def test_post_sandbox_rejects_malformed_image(daemon_env):
     """Image references go through validate_image_ref before spawn so the
     daemon doesn't pull from arbitrary user-controlled registries

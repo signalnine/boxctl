@@ -1,6 +1,7 @@
 """Tests for script runner."""
 
 import subprocess
+import sys
 import pytest
 from pathlib import Path
 
@@ -149,9 +150,9 @@ print(" ".join(sys.argv[1:]))
     def test_uses_context_when_provided(self, mock_context):
         """Uses provided context for execution."""
         ctx = mock_context(
-            tools_available=["python3"],
+            tools_available=[Path(sys.executable).name],
             command_outputs={
-                ("python3", "/path/to/script.py"): "mocked output",
+                (sys.executable, "/path/to/script.py"): "mocked output",
             }
         )
 
@@ -161,7 +162,24 @@ print(" ".join(sys.argv[1:]))
         )
 
         assert result.stdout == "mocked output"
-        assert ["python3", "/path/to/script.py"] in ctx.commands_run
+        assert [sys.executable, "/path/to/script.py"] in ctx.commands_run
+
+    def test_uses_current_python_interpreter(self, mock_context):
+        """Runs scripts with the same interpreter that launched boxctl."""
+        ctx = mock_context(
+            tools_available=[Path(sys.executable).name],
+            command_outputs={
+                (sys.executable, "/path/to/script.py"): "mocked output",
+            },
+        )
+
+        result = run_script(
+            Path("/path/to/script.py"),
+            context=ctx,
+        )
+
+        assert result.stdout == "mocked output"
+        assert [sys.executable, "/path/to/script.py"] in ctx.commands_run
 
 
 class TestSudoPath:
@@ -181,14 +199,14 @@ class TestSudoPath:
         ctx = mock_context(
             tools_available=["python3", "sudo"],
             command_outputs={
-                ("sudo", f"PYTHONPATH={boxctl_root}", "python3", "/p/s.py"): "ok",
+                ("sudo", f"PYTHONPATH={boxctl_root}", sys.executable, "/p/s.py"): "ok",
             },
         )
         run_script(Path("/p/s.py"), use_sudo=True, context=ctx)
         last = ctx.commands_run[-1]
         assert last[0] == "sudo"
         assert last[1] == f"PYTHONPATH={boxctl_root}"
-        assert last[2:] == ["python3", "/p/s.py"]
+        assert last[2:] == [sys.executable, "/p/s.py"]
 
     def test_sudo_prepends_boxctl_root_to_existing_pythonpath(self, mock_context, monkeypatch):
         monkeypatch.setenv("PYTHONPATH", "/some/where:/lib")
@@ -196,11 +214,11 @@ class TestSudoPath:
         expected = f"PYTHONPATH={boxctl_root}:/some/where:/lib"
         ctx = mock_context(
             tools_available=["python3", "sudo"],
-            command_outputs={("sudo", expected, "python3", "/p/s.py"): "ok"},
+            command_outputs={("sudo", expected, sys.executable, "/p/s.py"): "ok"},
         )
         run_script(Path("/p/s.py"), use_sudo=True, context=ctx)
         last = ctx.commands_run[-1]
-        assert last[:4] == ["sudo", expected, "python3", "/p/s.py"]
+        assert last[:4] == ["sudo", expected, sys.executable, "/p/s.py"]
 
     def test_sudo_does_not_duplicate_boxctl_root(self, mock_context, monkeypatch):
         boxctl_root = self._boxctl_root()
@@ -208,7 +226,7 @@ class TestSudoPath:
         ctx = mock_context(
             tools_available=["python3", "sudo"],
             command_outputs={
-                ("sudo", f"PYTHONPATH={boxctl_root}:/lib", "python3", "/p/s.py"): "ok",
+                ("sudo", f"PYTHONPATH={boxctl_root}:/lib", sys.executable, "/p/s.py"): "ok",
             },
         )
         run_script(Path("/p/s.py"), use_sudo=True, context=ctx)

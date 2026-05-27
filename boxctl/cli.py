@@ -13,6 +13,12 @@ from boxctl.core import discover_scripts, filter_scripts, run_script, needs_priv
 from boxctl.core.config import resolve_issue_platform
 
 
+def default_scripts_dir() -> Path:
+    """Resolve the default script root from env, falling back to cwd."""
+    env = os.environ.get("BOXCTL_SCRIPTS_DIR")
+    return Path(env) if env else Path.cwd()
+
+
 def create_parser() -> argparse.ArgumentParser:
     """Create the argument parser."""
     parser = argparse.ArgumentParser(
@@ -27,8 +33,8 @@ def create_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--scripts-dir",
         type=Path,
-        default=Path.cwd(),
-        help="Directory containing scripts (default: current directory)",
+        default=default_scripts_dir(),
+        help="Directory containing scripts (default: $BOXCTL_SCRIPTS_DIR or current directory)",
     )
     parser.add_argument(
         "--format",

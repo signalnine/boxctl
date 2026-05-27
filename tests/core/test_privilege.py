@@ -1,6 +1,7 @@
 """Tests for privilege escalation."""
 
 import pytest
+import sys
 from pathlib import Path
 
 from boxctl.core.runner import run_script, needs_privilege
@@ -79,14 +80,14 @@ class TestRunScriptWithPrivilege:
         ctx = mock_context(
             tools_available=["sudo", "python3"],
             command_outputs={
-                ("sudo", expected_pp, "python3", str(script_file)): "running as root\n",
+                ("sudo", expected_pp, sys.executable, str(script_file)): "running as root\n",
             }
         )
 
         result = run_script(script_file, context=ctx, use_sudo=True)
 
         assert result.success is True
-        assert ["sudo", expected_pp, "python3", str(script_file)] in ctx.commands_run
+        assert ["sudo", expected_pp, sys.executable, str(script_file)] in ctx.commands_run
 
     def test_no_sudo_when_not_needed(self, mock_context, tmp_path):
         """Does not use sudo when script doesn't need privilege."""
@@ -94,16 +95,16 @@ class TestRunScriptWithPrivilege:
         script_file.write_text(UNPRIVILEGED_SCRIPT)
 
         ctx = mock_context(
-            tools_available=["python3"],
+            tools_available=[Path(sys.executable).name],
             command_outputs={
-                ("python3", str(script_file)): "running as user\n",
+                (sys.executable, str(script_file)): "running as user\n",
             }
         )
 
         result = run_script(script_file, context=ctx, use_sudo=False)
 
         assert result.success is True
-        assert ["python3", str(script_file)] in ctx.commands_run
+        assert [sys.executable, str(script_file)] in ctx.commands_run
 
     def test_sudo_with_arguments(self, mock_context, tmp_path, monkeypatch):
         """Passes arguments through sudo."""
@@ -119,7 +120,7 @@ class TestRunScriptWithPrivilege:
         ctx = mock_context(
             tools_available=["sudo", "python3"],
             command_outputs={
-                ("sudo", expected_pp, "python3", str(script_file), "--arg", "value"): "output\n",
+                ("sudo", expected_pp, sys.executable, str(script_file), "--arg", "value"): "output\n",
             }
         )
 
@@ -131,4 +132,4 @@ class TestRunScriptWithPrivilege:
         )
 
         assert result.success is True
-        assert ["sudo", expected_pp, "python3", str(script_file), "--arg", "value"] in ctx.commands_run
+        assert ["sudo", expected_pp, sys.executable, str(script_file), "--arg", "value"] in ctx.commands_run

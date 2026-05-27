@@ -9,7 +9,7 @@ These options apply to all commands:
 | Option | Description |
 |--------|-------------|
 | `--version` | Show version and exit |
-| `--scripts-dir PATH` | Directory containing scripts (default: current directory) |
+| `--scripts-dir PATH` | Directory containing scripts (default: `$BOXCTL_SCRIPTS_DIR` or current directory) |
 | `--format {plain,json}` | Output format (default: plain) |
 
 ## Commands
@@ -85,6 +85,9 @@ boxctl run SCRIPT [OPTIONS] [-- SCRIPT_ARGS...]
 |--------|-------------|
 | `--timeout SECONDS` | Timeout in seconds (default: 60) |
 | `--sudo` | Run with sudo (auto-enabled for privileged scripts) |
+
+Scripts marked `privilege: root` auto-run through `sudo`. The MCP `run_script`
+tool uses the same behavior, so only expose the MCP server to trusted clients.
 
 **Examples:**
 

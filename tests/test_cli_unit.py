@@ -35,6 +35,26 @@ class TestCreateParser:
         args = parser.parse_args(["list"])
         assert args.command == "list"
 
+    def test_scripts_dir_defaults_to_env_var(self, tmp_path, monkeypatch):
+        """BOXCTL_SCRIPTS_DIR supplies the default scripts directory."""
+        monkeypatch.setenv("BOXCTL_SCRIPTS_DIR", str(tmp_path))
+
+        parser = create_parser()
+        args = parser.parse_args(["list"])
+
+        assert args.scripts_dir == tmp_path
+
+    def test_scripts_dir_flag_overrides_env_var(self, tmp_path, monkeypatch):
+        """Explicit --scripts-dir takes precedence over BOXCTL_SCRIPTS_DIR."""
+        env_dir = tmp_path / "env"
+        cli_dir = tmp_path / "cli"
+        monkeypatch.setenv("BOXCTL_SCRIPTS_DIR", str(env_dir))
+
+        parser = create_parser()
+        args = parser.parse_args(["--scripts-dir", str(cli_dir), "list"])
+
+        assert args.scripts_dir == cli_dir
+
 
 class TestCmdList:
     """Tests for cmd_list function."""

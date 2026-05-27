@@ -1,0 +1,5 @@
+- [x] Scripts run under the same Python interpreter as boxctl -> test: runner records `sys.executable` in the child command.
+- [x] Sudo script runs still receive boxctl's import root on `PYTHONPATH` -> test: existing sudo runner tests keep passing with the interpreter change.
+- [x] `BOXCTL_SCRIPTS_DIR` supplies the default scripts directory when `--scripts-dir` is omitted -> test: parser default follows the env var and explicit CLI value still wins.
+- [x] Daemon access log entries are durable before a client finishes reading a response -> test: handler records the access-log entry before `_send_json` writes the body.
+- [x] MCP `run_script` sudo escalation is documented as a trusted-client boundary -> verification: CLI docs mention privileged scripts may invoke sudo.
